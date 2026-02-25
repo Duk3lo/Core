@@ -11,10 +11,9 @@ public final class DefaultConfig {
         Config cfg = new Config();
 
         Config.Server server = new Config.Server();
-        server.basePath = "C:/Users/MSI/Desktop/hytale/Lobby - copia";
+        server.basePath = "";
         server.jarName = "HytaleServer.jar";
 
-        // args como UNA SOLA LÍNEA
         server.args = "--assets ../Assets.zip --backup --backup-dir backups --backup-frequency 30";
 
         cfg.server = server;

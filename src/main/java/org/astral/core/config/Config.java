@@ -11,15 +11,19 @@ public class Config {
         public String basePath;
         public String jarName;
         public String args;
+
+        public Server() {}
     }
 
     public static class Watcher {
-        public String path;
-        public String type;
 
-        public Watcher(String path, String type) {
+        public String path;
+
+        public Watcher() {
+        }
+
+        public Watcher(String path) {
             this.path = path;
-            this.type = type;
         }
     }
 }

@@ -14,174 +14,198 @@ import java.util.*;
 public class ConfigLoader {
 
     private static final String CONFIG_FILE_NAME = "config.yml";
-    private static final DateTimeFormatter BACKUP_TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+    private static final DateTimeFormatter BACKUP_TS =
+            DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
     public static Config load() {
-        Path configPath = Path.of(System.getProperty("user.dir")).resolve(CONFIG_FILE_NAME);
+        Path configPath = Path.of(System.getProperty("user.dir"))
+                .resolve(CONFIG_FILE_NAME);
 
         try {
             if (Files.notExists(configPath)) {
-                Config defaultCfg = DefaultConfig.defaultConfig();
-                writeConfigFile(configPath, defaultCfg);
-                System.out.println("[CONFIG] config.yml no encontrado — se creó uno en: " + configPath.toAbsolutePath());
-                return defaultCfg;
+                Config def = DefaultConfig.defaultConfig();
+                writeConfigFile(configPath, def);
+                System.out.println("[CONFIG] config.yml creado en: "
+                        + configPath.toAbsolutePath());
+                return def;
             }
-            try (InputStream input = new FileInputStream(configPath.toFile())) {
+
+            try (InputStream in = new FileInputStream(configPath.toFile())) {
                 Yaml yaml = new Yaml();
-                Config cfg = yaml.loadAs(input, Config.class);
+                Config cfg = yaml.loadAs(in, Config.class);
+
                 if (cfg == null) {
-                    Config defaultCfg = DefaultConfig.defaultConfig();
-                    writeConfigFile(configPath, defaultCfg);
-                    System.out.println("[CONFIG] config.yml vacío — se reemplazó por la configuración por defecto.");
-                    return defaultCfg;
+                    Config def = DefaultConfig.defaultConfig();
+                    writeConfigFile(configPath, def);
+                    System.out.println("[CONFIG] config.yml vacío — restaurado.");
+                    return def;
                 }
-                if (cfg.watchers == null) cfg.watchers = new ArrayList<>();
+
+                if (cfg.watchers == null)
+                    cfg.watchers = new ArrayList<>();
+
                 return cfg;
-            } catch (Exception primaryEx) {
-                System.err.println("[CONFIG] Error al leer config.yml: " + primaryEx.getMessage());
-                try (InputStream input2 = new FileInputStream(configPath.toFile())) {
-                    Yaml yaml = new Yaml();
-                    Object loaded = yaml.load(input2);
-                    if (loaded instanceof Map) {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> root = (Map<String, Object>) loaded;
-                        Config repaired = mapToConfig(root);
-                        // reescribir fichero limpio (sin tags)
-                        writeConfigFile(configPath, repaired);
-                        System.out.println("[CONFIG] config.yml reparado a partir del viejo contenido (se sobrescribió con versión limpia).");
-                        return repaired;
-                    } else {
-                        System.err.println("[CONFIG] El YAML no es un map (tipo: " + (loaded == null ? "null" : loaded.getClass()) + ")");
-                        Path bak = backupConfigFile(configPath);
-                        System.err.println("[CONFIG] Se movió el config viejo a: " + bak.toAbsolutePath());
-                        Config defaultCfg = DefaultConfig.defaultConfig();
-                        writeConfigFile(configPath, defaultCfg);
-                        return defaultCfg;
-                    }
-                } catch (Exception secondEx) {
-                    // todo falló -> backup y default
-                    System.err.println("[CONFIG] No se pudo reparar config.yml: " + secondEx.getMessage());
-                    Path bak = backupConfigFile(configPath);
-                    System.err.println("[CONFIG] Se movió el config viejo a: " + bak.toAbsolutePath());
-                    Config defaultCfg = DefaultConfig.defaultConfig();
-                    writeConfigFile(configPath, defaultCfg);
-                    return defaultCfg;
-                }
+
+            } catch (Exception ex) {
+                System.err.println("[CONFIG] Error leyendo config.yml: "
+                        + ex.getMessage());
+
+                return attemptRepair(configPath);
             }
 
         } catch (Exception e) {
-            throw new RuntimeException("Error cargando/creando config.yml en: " + Path.of(System.getProperty("user.dir")).resolve(CONFIG_FILE_NAME).toAbsolutePath(), e);
+            throw new RuntimeException(
+                    "Error cargando config.yml en: "
+                            + configPath.toAbsolutePath(), e);
         }
     }
 
-    private static @NotNull Config mapToConfig(@NotNull Map<String, Object> root) {
-        Config cfg = DefaultConfig.defaultConfig(); // start from defaults and override if present
+    private static Config attemptRepair(Path configPath) {
+        try (InputStream in = new FileInputStream(configPath.toFile())) {
+            Yaml yaml = new Yaml();
+            Object loaded = yaml.load(in);
+
+            if (loaded instanceof Map<?, ?> raw) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> root = (Map<String, Object>) raw;
+
+                Config repaired = mapToConfig(root);
+                writeConfigFile(configPath, repaired);
+
+                System.out.println("[CONFIG] config.yml reparado.");
+                return repaired;
+            }
+
+        } catch (Exception ignored) {}
+
+        Path bak = backupConfigFile(configPath);
+        System.err.println("[CONFIG] Se movió config inválido a: "
+                + bak.toAbsolutePath());
+
+        Config def = DefaultConfig.defaultConfig();
+        try {
+            writeConfigFile(configPath, def);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        return def;
+    }
+
+    private static @NotNull Config mapToConfig(
+            @NotNull Map<String, Object> root) {
+
+        Config cfg = DefaultConfig.defaultConfig();
+
+        /* ================= SERVER ================= */
 
         if (root.containsKey("server")) {
             Object serverObj = root.get("server");
-            if (serverObj instanceof Map) {
+
+            if (serverObj instanceof Map<?, ?> raw) {
                 @SuppressWarnings("unchecked")
-                Map<String, Object> serverMap = (Map<String, Object>) serverObj;
-                if (serverMap.containsKey("basePath")) {
-                    cfg.server.basePath = String.valueOf(serverMap.get("basePath"));
-                }
-                if (serverMap.containsKey("jarName")) {
-                    cfg.server.jarName = String.valueOf(serverMap.get("jarName"));
-                }
+                Map<String, Object> server =
+                        (Map<String, Object>) raw;
 
-                // args puede venir como List o como String (línea única).
-                if (serverMap.containsKey("args")) {
-                    Object argsObj = serverMap.get("args");
-                    List<String> parsedArgs = new ArrayList<>();
-                    if (argsObj instanceof List) {
-                        @SuppressWarnings("unchecked")
-                        List<Object> al = (List<Object>) argsObj;
-                        for (Object o : al) {
-                            parsedArgs.add(String.valueOf(o));
-                        }
-                    } else if (argsObj instanceof String raw) {
-                        parsedArgs.addAll(splitArgs(raw));
+                if (server.containsKey("basePath"))
+                    cfg.server.basePath =
+                            String.valueOf(server.get("basePath"));
+
+                if (server.containsKey("jarName"))
+                    cfg.server.jarName =
+                            String.valueOf(server.get("jarName"));
+
+                if (server.containsKey("args")) {
+                    Object argsObj = server.get("args");
+                    List<String> parsed = new ArrayList<>();
+
+                    if (argsObj instanceof List<?> list) {
+                        for (Object o : list)
+                            parsed.add(String.valueOf(o));
+                    } else if (argsObj instanceof String s) {
+                        parsed.addAll(splitArgs(s));
                     }
 
-                    // Filtrar entradas --assets que apunten a "Complement" (case-insensitive)
-                    List<String> filtered = new ArrayList<>();
-                    for (int i = 0; i < parsedArgs.size(); i++) {
-                        String tok = parsedArgs.get(i);
-                        if ("--assets".equals(tok) && i + 1 < parsedArgs.size()) {
-                            String val = parsedArgs.get(i + 1);
-                            if (val.toLowerCase(Locale.ROOT).contains("complement")) {
-                                // saltar ambos
-                                System.out.println("[CONFIG] Filtrando --assets " + val + " (se omiten los Complement).");
-                            } else {
-                                filtered.add(tok);
-                                filtered.add(val);
-                            }
-                            i++; // skip value
-                        } else {
-                            filtered.add(tok);
-                        }
-                    }
-                    cfg.server.args = joinTokensToLine(filtered);
+                    cfg.server.args = joinTokensToLine(parsed);
                 }
             }
         }
 
+        /* ================= WATCHERS ================= */
+
         if (root.containsKey("watchers")) {
             Object w = root.get("watchers");
-            if (w instanceof List) {
-                @SuppressWarnings("unchecked")
-                List<Object> wl = (List<Object>) w;
+
+            if (w instanceof List<?> list) {
                 List<Config.Watcher> watchers = new ArrayList<>();
-                for (Object o : wl) {
-                    if (o instanceof Map) {
+
+                for (Object o : list) {
+
+                    if (o instanceof Map<?, ?> raw) {
                         @SuppressWarnings("unchecked")
-                        Map<String, Object> wm = (Map<String, Object>) o;
-                        String path = wm.containsKey("path") ? String.valueOf(wm.get("path")) : null;
-                        String type = wm.containsKey("type") ? String.valueOf(wm.get("type")) : "mods";
-                        if (path != null) {
-                            watchers.add(new Config.Watcher(path, type));
+                        Map<String, Object> wm =
+                                (Map<String, Object>) raw;
+
+                        Object pathObj = wm.get("path");
+                        if (pathObj != null) {
+                            watchers.add(
+                                    new Config.Watcher(
+                                            String.valueOf(pathObj)
+                                    )
+                            );
                         }
-                    } else if (o instanceof String) {
-                        // antigua forma: lista de strings => interpretar como path con tipo "mods"
-                        watchers.add(new Config.Watcher(String.valueOf(o), "mods"));
+
+                    } else if (o instanceof String s) {
+                        watchers.add(new Config.Watcher(s));
                     }
                 }
+
                 cfg.watchers = watchers;
             }
         }
 
-        if (cfg.watchers == null) cfg.watchers = new ArrayList<>();
+        if (cfg.watchers == null)
+            cfg.watchers = new ArrayList<>();
+
         return cfg;
     }
 
     private static Path backupConfigFile(@NotNull Path path) {
         try {
             String ts = LocalDateTime.now().format(BACKUP_TS);
-            Path bak = path.resolveSibling(path.getFileName().toString() + ".bak-" + ts);
+            Path bak = path.resolveSibling(
+                    path.getFileName() + ".bak-" + ts
+            );
             Files.move(path, bak);
             return bak;
         } catch (IOException e) {
-            System.err.println("[CONFIG] No se pudo mover config.yml para backup: " + e.getMessage());
+            System.err.println("[CONFIG] No se pudo hacer backup: "
+                    + e.getMessage());
             return path;
         }
     }
 
-    private static void writeConfigFile(@NotNull Path path, Config cfg) throws IOException {
-        if (path.getParent() != null) {
+    private static void writeConfigFile(
+            @NotNull Path path,
+            Config cfg) throws IOException {
+
+        if (path.getParent() != null)
             Files.createDirectories(path.getParent());
-        }
 
-        DumperOptions options = new DumperOptions();
-        options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
-        options.setPrettyFlow(true);
+        DumperOptions opts = new DumperOptions();
+        opts.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
+        opts.setPrettyFlow(true);
 
-        Yaml yaml = new Yaml(options);
+        Yaml yaml = new Yaml(opts);
 
         Map<String, Object> server = new LinkedHashMap<>();
-        server.put("basePath", cfg.server != null ? cfg.server.basePath : "");
-        server.put("jarName", cfg.server != null ? cfg.server.jarName : "");
+        server.put("basePath",
+                cfg.server != null ? cfg.server.basePath : "");
+        server.put("jarName",
+                cfg.server != null ? cfg.server.jarName : "");
 
-        if (cfg.server != null && cfg.server.args != null && !cfg.server.args.trim().isEmpty()) {
+        if (cfg.server != null &&
+                cfg.server.args != null &&
+                !cfg.server.args.isBlank()) {
             server.put("args", cfg.server.args);
         }
 
@@ -190,37 +214,45 @@ public class ConfigLoader {
             for (Config.Watcher w : cfg.watchers) {
                 Map<String, Object> wm = new LinkedHashMap<>();
                 wm.put("path", w.path);
-                wm.put("type", w.type != null ? w.type : "mods");
                 watchersOut.add(wm);
             }
         }
 
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("server", server);
-        data.put("watchers", watchersOut);
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("server", server);
+        root.put("watchers", watchersOut);
 
-        try (BufferedWriter writer = Files.newBufferedWriter(path)) {
-            yaml.dump(data, writer);
+        try (BufferedWriter writer =
+                     Files.newBufferedWriter(path)) {
+            yaml.dump(root, writer);
         }
     }
 
-    private static @NotNull List<String> splitArgs(String line) {
+    /* ================= ARG UTILS ================= */
+
+    public static @NotNull List<String> splitArgs(String line) {
         List<String> result = new ArrayList<>();
-        if (line == null || line.trim().isEmpty()) return result;
+        if (line == null || line.isBlank()) return result;
+
         StringBuilder cur = new StringBuilder();
         boolean inDouble = false;
         boolean inSingle = false;
-        for (int i = 0; i < line.length(); i++) {
-            char c = line.charAt(i);
+
+        for (char c : line.toCharArray()) {
+
             if (c == '"' && !inSingle) {
                 inDouble = !inDouble;
                 continue;
             }
+
             if (c == '\'' && !inDouble) {
                 inSingle = !inSingle;
                 continue;
             }
-            if (Character.isWhitespace(c) && !inDouble && !inSingle) {
+
+            if (Character.isWhitespace(c)
+                    && !inDouble && !inSingle) {
+
                 if (!cur.isEmpty()) {
                     result.add(cur.toString());
                     cur.setLength(0);
@@ -229,36 +261,55 @@ public class ConfigLoader {
                 cur.append(c);
             }
         }
-        if (!cur.isEmpty()) result.add(cur.toString());
+
+        if (!cur.isEmpty())
+            result.add(cur.toString());
+
         return result;
     }
 
-    private static @NotNull String joinTokensToLine(List<String> tokens) {
-        if (tokens == null || tokens.isEmpty()) return "";
+    private static @NotNull String joinTokensToLine(
+            List<String> tokens) {
+
+        if (tokens == null || tokens.isEmpty())
+            return "";
+
         StringBuilder joined = new StringBuilder();
+
         for (int i = 0; i < tokens.size(); i++) {
+
             String t = tokens.get(i);
+
             if (needsQuoting(t)) {
                 String esc = t.replace("\"", "\\\"");
                 joined.append("\"").append(esc).append("\"");
             } else {
                 joined.append(t);
             }
-            if (i < tokens.size() - 1) joined.append(" ");
+
+            if (i < tokens.size() - 1)
+                joined.append(" ");
         }
+
         return joined.toString();
     }
 
     private static boolean needsQuoting(@NotNull String s) {
-        return s.contains(" ") || s.contains(":") || s.contains("#") || (s.startsWith("-") && s.length() > 1 && Character.isDigit(s.charAt(1)));
+        return s.contains(" ")
+                || s.contains(":")
+                || s.contains("#");
     }
 
     public static void save(Config cfg) {
-        Path configPath = Path.of(System.getProperty("user.dir")).resolve(CONFIG_FILE_NAME);
+        Path configPath = Path.of(System.getProperty("user.dir"))
+                .resolve(CONFIG_FILE_NAME);
+
         try {
             writeConfigFile(configPath, cfg);
         } catch (IOException e) {
-            throw new RuntimeException("No se pudo guardar config.yml en: " + configPath.toAbsolutePath(), e);
+            throw new RuntimeException(
+                    "No se pudo guardar config.yml en: "
+                            + configPath.toAbsolutePath(), e);
         }
     }
 }

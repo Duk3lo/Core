@@ -17,12 +17,18 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
 
-public class Main {
+class Main {
 
     static void main() {
 
         Scanner scanner = new Scanner(System.in);
-        scanner.nextLine();
+
+        Config config = ConfigLoader.load();
+        if (config == null) config = new Config();
+        if (config.server == null) config.server = new Config.Server();
+        if (config.watchers == null) config.watchers = new ArrayList<>();
+
+        Path basePath = resolveServerPath(config, scanner);
 
         Path baseDir = Path.of(System.getProperty("user.dir"));
         Path localMods = baseDir.resolve("mods");
@@ -32,48 +38,69 @@ public class Main {
             Files.createDirectories(localMods);
             Files.createDirectories(localAssets);
         } catch (IOException e) {
-            System.out.println("[MAIN] Error creando directorios: " + e.getMessage());
+            System.out.println("[MAIN] Error creando directorios locales: " + e.getMessage());
             return;
         }
 
-        Config config = ConfigLoader.load();
-        Path basePath = Path.of(config.server.basePath);
+        if (config.server.jarName == null) config.server.jarName = "";
 
         Path serverMods = basePath.resolve("Server").resolve("mods");
         Path jarPath = basePath.resolve("Server").resolve(config.server.jarName);
 
-        List<String> baseArgs = new ArrayList<>();
-        if (config.server.args != null && !config.server.args.trim().isEmpty()) {
-            baseArgs.addAll(parseArgsLine(config.server.args));
-        } else {
-            baseArgs.add("--assets");
-            baseArgs.add("../Assets.zip");
-            baseArgs.add("--backup");
-            baseArgs.add("--backup-dir");
-            baseArgs.add("backups");
-            baseArgs.add("--backup-frequency");
-            baseArgs.add("30");
-        }
+        List<String> baseArgs = buildArgs(config.server.args);
 
-        JarProcessManager manager = new JarProcessManager(
-                jarPath.toString(),
-                localAssets,
-                baseArgs
-        );
+        JarProcessManager manager =
+                new JarProcessManager(jarPath.toString(), localAssets, baseArgs);
 
         ManagerHolder managerHolder = new ManagerHolder(manager);
-        WatcherRegistry watcherRegistry = new WatcherRegistry(managerHolder, serverMods);
 
-        try {
-            watcherRegistry.addWatcher(localMods, "mods");
-        } catch (IOException e) {
-            System.err.println("[MAIN] No se pudo añadir watcher para " + localMods + ": " + e.getMessage());
+        WatcherRegistry watcherRegistry =
+                new WatcherRegistry(managerHolder, serverMods);
+
+        /* ================= CARGA WATCHERS DESDE CONFIG ================= */
+
+        if (!config.watchers.isEmpty()) {
+
+            for (Config.Watcher w : config.watchers) {
+
+                if (w.path == null || w.path.isBlank()) {
+                    System.out.println("[WATCHER] Ruta vacía en config, ignorando.");
+                    continue;
+                }
+
+                Path watcherPath = Path.of(w.path);
+
+                if (!Files.exists(watcherPath)) {
+                    System.out.println("[WATCHER] No se pudo encontrar la ruta: " + watcherPath);
+                    continue;
+                }
+
+                try {
+                    watcherRegistry.addWatcher(watcherPath);
+                    System.out.println("[WATCHER] Cargado watcher: " + watcherPath);
+                } catch (Exception e) {
+                    System.out.println("[WATCHER] Error registrando watcher "
+                            + watcherPath + ": " + e.getMessage());
+                }
+            }
+
+        } else {
+            // Si no hay watchers configurados → usar localMods por defecto
+            watcherRegistry.addWatcher(localMods);
+            System.out.println("[WATCHER] Usando watcher por defecto: " + localMods);
         }
 
-        manager.start();
+        /* ================= SHUTDOWN LIMPIO ================= */
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println("[SHUTDOWN] Cerrando aplicación...");
+            watcherRegistry.shutdownAll();
+            manager.stop();
+        }));
+
+        /* ================= INICIAR PROCESO ================= */
 
         manager.start();
-
 
         Thread assetsThread = new Thread(
                 new AssetsWatcher(localAssets, managerHolder),
@@ -92,8 +119,12 @@ public class Main {
         BackendConsole console = new BackendConsole(
                 managerHolder,
                 watcherRegistry,
+                config,
                 null,
-                manager::stop
+                () -> {
+                    watcherRegistry.shutdownAll();
+                    manager.stop();
+                }
         );
 
         console.startListening();
@@ -101,33 +132,64 @@ public class Main {
         System.out.println("[MAIN] Programa finalizado.");
     }
 
+    /* ================= RESOLVER RUTA SERVER ================= */
 
-    private static @NotNull List<String> parseArgsLine(String line) {
-        List<String> result = new ArrayList<>();
-        if (line == null || line.trim().isEmpty()) return result;
-        StringBuilder cur = new StringBuilder();
-        boolean inDouble = false;
-        boolean inSingle = false;
-        for (int i = 0; i < line.length(); i++) {
-            char c = line.charAt(i);
-            if (c == '"' && !inSingle) {
-                inDouble = !inDouble;
-                continue;
-            }
-            if (c == '\'' && !inDouble) {
-                inSingle = !inSingle;
-                continue;
-            }
-            if (Character.isWhitespace(c) && !inDouble && !inSingle) {
-                if (!cur.isEmpty()) {
-                    result.add(cur.toString());
-                    cur.setLength(0);
+    private static @NotNull Path resolveServerPath(@NotNull Config config, Scanner scanner) {
+
+        String raw = config.server.basePath != null
+                ? config.server.basePath.trim()
+                : "";
+
+        Path configuredPath = raw.isEmpty() ? null : Path.of(raw);
+
+        if (configuredPath != null && Files.exists(configuredPath)) {
+            System.out.println("[MAIN] Usando ruta del config: " + configuredPath);
+            return configuredPath;
+        }
+
+        System.out.println("[MAIN] Ruta inválida.");
+        System.out.print("[MAIN] Ingrese ruta del servidor: ");
+
+        String input = scanner.nextLine().trim();
+
+        Path basePath;
+
+        if (input.isEmpty()) {
+            basePath = Path.of(System.getProperty("user.dir"));
+        } else {
+            basePath = Path.of(input);
+            if (!Files.exists(basePath)) {
+                try {
+                    Files.createDirectories(basePath);
+                } catch (IOException e) {
+                    basePath = Path.of(System.getProperty("user.dir"));
                 }
-            } else {
-                cur.append(c);
             }
         }
-        if (!cur.isEmpty()) result.add(cur.toString());
-        return result;
+
+        config.server.basePath = basePath.toString();
+        ConfigLoader.save(config);
+
+        return basePath;
+    }
+
+    /* ================= BUILD ARGS ================= */
+
+    private static @NotNull List<String> buildArgs(String rawArgs) {
+
+        if (rawArgs != null && !rawArgs.trim().isEmpty()) {
+            return ConfigLoader.splitArgs(rawArgs);
+        }
+
+        List<String> defaults = new ArrayList<>();
+        defaults.add("--assets");
+        defaults.add("../Assets.zip");
+        defaults.add("--backup");
+        defaults.add("--backup-dir");
+        defaults.add("backups");
+        defaults.add("--backup-frequency");
+        defaults.add("30");
+
+        return defaults;
     }
 }

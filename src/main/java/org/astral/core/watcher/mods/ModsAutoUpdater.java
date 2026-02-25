@@ -10,7 +10,7 @@ public class ModsAutoUpdater {
 
     private final ManagerHolder managerHolder;
     private final Path sourceMods;
-    private volatile Path serverMods;
+    private final Path serverMods;
 
     private final AtomicBoolean updating = new AtomicBoolean(false);
 
@@ -18,11 +18,6 @@ public class ModsAutoUpdater {
         this.managerHolder = managerHolder;
         this.sourceMods = sourceMods;
         this.serverMods = serverMods;
-    }
-
-    public void setServerMods(Path serverMods) {
-        this.serverMods = serverMods;
-        System.out.println("[MODS] serverMods actualizado: " + serverMods);
     }
 
     public void triggerUpdate() {
