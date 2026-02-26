@@ -2,6 +2,9 @@ package org.astral.core.monitor;
 
 import org.astral.core.process.JarProcessManager;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
@@ -17,14 +20,22 @@ public class TpsMonitor {
     private final AtomicInteger unresponsiveCount = new AtomicInteger(0);
     private volatile long lastRestartAt = 0L;
 
+    // archivo para persistir la última vez que se realizó un reinicio periódico
+    private final Path lastPeriodicFile;
+
     // ejemplo de línea a parsear:
     // TPS (10 sec): Min: 30.0, Avg: 30.0, Max: 30.0
     private static final Pattern TPS_PATTERN =
             Pattern.compile("TPS \\(([^)]+)\\): Min: ([0-9.]+), Avg: ([0-9.]+), Max: ([0-9.]+)");
 
-    public TpsMonitor(JarProcessManager manager, MonitorConfig cfg) {
+    public TpsMonitor(JarProcessManager manager, MonitorConfig cfg, Path monitorFile) {
         this.manager = manager;
         this.cfg = cfg;
+        if (monitorFile != null && monitorFile.getParent() != null) {
+            this.lastPeriodicFile = monitorFile.getParent().resolve("monitor.last_restart");
+        } else {
+            this.lastPeriodicFile = null;
+        }
     }
 
     public void start() {
@@ -69,12 +80,16 @@ public class TpsMonitor {
         try {
             if (!manager.isRunning()) {
                 // si no está corriendo, evitamos enviar comandos inútiles
+                // también comprobamos si toca reinicio periódico (aun si no está corriendo)
+                checkPeriodicRestart();
                 return;
             }
 
             long now = System.currentTimeMillis();
             if (now - lastRestartAt < (cfg.minTimeBetweenRestartsSeconds * 1000L)) {
                 // evitar reinicios repetidos
+                // pero aun así check periodic
+                checkPeriodicRestart();
                 return;
             }
 
@@ -122,8 +137,66 @@ public class TpsMonitor {
                 }
             }
 
+            // Comprobación de reinicio periódico al final de cada ciclo
+            checkPeriodicRestart();
+
         } catch (Throwable t) {
             System.out.println("[MONITOR] Error en checkOnce: " + t.getMessage());
+        }
+    }
+
+    /**
+     * Comprueba si corresponde hacer un reinicio periódico según la configuración.
+     * Si cfg.enablePeriodicRestart == true y han pasado >= periodicRestartDays desde el último reinicio periódico,
+     * intenta reiniciar y persiste la marca temporal.
+     */
+    private void checkPeriodicRestart() {
+        try {
+            if (!cfg.enablePeriodicRestart) return;
+            if (cfg.periodicRestartDays <= 0) return;
+            if (lastPeriodicFile == null) return;
+
+            long now = System.currentTimeMillis();
+            long last = readLastPeriodicTimestamp();
+
+            long intervalMillis = TimeUnit.DAYS.toMillis(cfg.periodicRestartDays);
+
+            if (now - last >= intervalMillis) {
+                // evitar reinicios si acabamos de reiniciar por otras razones
+                if (now - lastRestartAt < (cfg.minTimeBetweenRestartsSeconds * 1000L)) {
+                    System.out.println("[MONITOR] Reinicio periódico pendiente pero dentro del cooldown de reinicio.");
+                    return;
+                }
+
+                System.out.println("[MONITOR] Reinicio periódico programado (han pasado " + ((now - last) / (1000L*60L*60L*24L)) + " días). Procediendo a reiniciar...");
+                doRestart();
+                writeLastPeriodicTimestamp(now);
+            }
+        } catch (Exception e) {
+            System.out.println("[MONITOR] Error comprobando reinicio periódico: " + e.getMessage());
+        }
+    }
+
+    private long readLastPeriodicTimestamp() {
+        try {
+            if (lastPeriodicFile == null) return 0L;
+            if (!Files.exists(lastPeriodicFile)) return 0L;
+            String s = Files.readString(lastPeriodicFile).trim();
+            if (s.isEmpty()) return 0L;
+            return Long.parseLong(s);
+        } catch (Exception e) {
+            System.err.println("[MONITOR] No se pudo leer lastPeriodicFile: " + e.getMessage());
+            return 0L;
+        }
+    }
+
+    private void writeLastPeriodicTimestamp(long ts) {
+        try {
+            if (lastPeriodicFile == null) return;
+            if (lastPeriodicFile.getParent() != null) Files.createDirectories(lastPeriodicFile.getParent());
+            Files.writeString(lastPeriodicFile, String.valueOf(ts));
+        } catch (IOException e) {
+            System.err.println("[MONITOR] No se pudo escribir lastPeriodicFile: " + e.getMessage());
         }
     }
 

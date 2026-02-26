@@ -101,7 +101,8 @@ class Main {
 
         Path monitorFile = baseDir.resolve("monitor.yml");
         MonitorConfig monitorConfig = MonitorConfig.load(monitorFile); // crea por defecto si no existe
-        TpsMonitor tpsMonitor = new TpsMonitor(manager, monitorConfig);
+        // pasar monitorFile para persistencia del reinicio periódico
+        TpsMonitor tpsMonitor = new TpsMonitor(manager, monitorConfig, monitorFile);
 
         /* Runnable para recargar la configuración del monitor en caliente */
         Runnable reloadMonitorRunnable = () -> {
@@ -131,10 +132,6 @@ class Main {
         );
         assetsThread.setDaemon(true);
         assetsThread.start();
-
-        // Nota: NO llamamos a DirectorySynchronizer.replaceSync(...) aquí porque WatcherRegistry
-        // ya ejecuta la sincronización inicial (si prefieres que Main haga la sync, mueve/remueve la
-        // sync del constructor de WatcherRegistry y descomenta la llamada aquí).
 
         // Ahora sí arrancar el servidor
         manager.start();

@@ -18,6 +18,10 @@ public class MonitorConfig {
     public int restartCooldownSeconds = 300;
     public boolean restartOnLowTps = true;
 
+    // --- periodic restart ---
+    public boolean enablePeriodicRestart = false; // activar reinicio periódico
+    public int periodicRestartDays = 7;           // cada cuantos días reiniciar si está activado
+
     public MonitorConfig() {}
 
     /**
@@ -57,6 +61,8 @@ public class MonitorConfig {
                         case "minTimeBetweenRestartsSeconds" -> cfg.minTimeBetweenRestartsSeconds = Integer.parseInt(value);
                         case "restartCooldownSeconds" -> cfg.restartCooldownSeconds = Integer.parseInt(value);
                         case "restartOnLowTps" -> cfg.restartOnLowTps = Boolean.parseBoolean(value);
+                        case "enablePeriodicRestart" -> cfg.enablePeriodicRestart = Boolean.parseBoolean(value);
+                        case "periodicRestartDays" -> cfg.periodicRestartDays = Integer.parseInt(value);
                         default -> { /* ignore unknown */ }
                     }
                 } catch (Exception e) {
@@ -80,9 +86,11 @@ public class MonitorConfig {
                 # tpsMin: si el avg de TPS es menor a esto, reiniciar
                 # tpsCommand: comando que se envía al servidor para obtener TPS
                 # unresponsiveThreshold: intentos sin respuesta antes de forzar restart
-                # minTimeBetweenRestartsSeconds: evita reinicios repetidos
-                # restartCooldownSeconds: tiempo de cooldown después de un restart
+                # minTimeBetweenRestartsSeconds: evita reinicios repetidos (segundos)
+                # restartCooldownSeconds: tiempo de cooldown (segundos) después de un restart
                 # restartOnLowTps: si es true reinicia cuando TPS < tpsMin
+                # enablePeriodicRestart: si true, realizará un reinicio periódico cada periodicRestartDays días
+                # periodicRestartDays: número de días entre reinicios periódicos
                 checkIntervalSeconds: 60
                 responseTimeoutSeconds: 5
                 tpsMin: 18.0
@@ -91,6 +99,8 @@ public class MonitorConfig {
                 minTimeBetweenRestartsSeconds: 60
                 restartCooldownSeconds: 300
                 restartOnLowTps: true
+                enablePeriodicRestart: false
+                periodicRestartDays: 7
                 """;
         Files.writeString(path, content);
     }
