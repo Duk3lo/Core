@@ -5,7 +5,7 @@ import org.astral.core.config.Config;
 import org.astral.core.config.ConfigLoader;
 import org.astral.core.process.JarProcessManager;
 import org.astral.core.process.ManagerHolder;
-import org.astral.core.updates.github.UpdaterService;
+import org.astral.core.updates.github.GithubService;
 import org.astral.core.watcher.assets.AssetsWatcher;
 import org.astral.core.watcher.mods.DirectorySynchronizer;
 import org.astral.core.watcher.mods.WatcherRegistry;
@@ -44,10 +44,10 @@ class Main {
         }
 
         // Inicializar UpdaterService (y generar updates.yml si no existe)
-        UpdaterService updaterService = null;
+        GithubService githubService = null;
         Path updatesGithubFile = baseDir.resolve("githubUpdates.yml");
         try {
-            updaterService = new UpdaterService(updatesGithubFile, localMods, localAssets);
+            githubService = new GithubService(updatesGithubFile, localMods, localAssets);
             System.out.println("[MAIN] UpdaterService inicializado.");
         } catch (IOException e) {
             System.err.println("[MAIN] No se pudo inicializar UpdaterService: " + e.getMessage());
@@ -136,11 +136,11 @@ class Main {
                     watcherRegistry.shutdownAll();
                     manager.stop();
                 },
-                updaterService // ahora la clase acepta este argumento
+                githubService // ahora la clase acepta este argumento
         );
 
-        if (updaterService != null) {
-            final UpdaterService us = updaterService;
+        if (githubService != null) {
+            final GithubService us = githubService;
             new Thread(() -> {
                 System.out.println("[MAIN] Iniciando comprobación inicial de actualizaciones...");
                 us.checkAllAndDownload();

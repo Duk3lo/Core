@@ -18,12 +18,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 
-public class UpdaterService {
+public class GithubService {
 
     private final Path updatesFile;
     private final Path localMods;
     private final Path localAssets;
-    private final UpdatesConfig cfg;
+    private final GithubConfig cfg;
     private final GitHub github;
     private final HttpClient httpClient;
     private final String token; // puede ser null
@@ -32,11 +32,11 @@ public class UpdaterService {
     // Si false -> eliminar archivo anterior (no recomendado porque podrías perder versión)
     private static final boolean MOVE_OLD_TO_BACKUPS = true;
 
-    public UpdaterService(Path updatesFile, Path localMods, Path localAssets) throws IOException {
+    public GithubService(Path updatesFile, Path localMods, Path localAssets) throws IOException {
         this.updatesFile = updatesFile;
         this.localMods = localMods;
         this.localAssets = localAssets;
-        this.cfg = UpdatesLoader.loadOrCreate(updatesFile);
+        this.cfg = GithubLoader.loadOrCreate(updatesFile);
 
         this.token = System.getenv("GITHUB_TOKEN");
         if (token != null && !token.isBlank()) {
@@ -52,14 +52,14 @@ public class UpdaterService {
                 .build();
     }
 
-    public UpdatesConfig getConfig() {
+    public GithubConfig getConfig() {
         return cfg;
     }
 
     public void checkAllAndDownload() {
-        for (Map.Entry<String, UpdatesConfig.RepoEntry> e : cfg.repos.entrySet()) {
+        for (Map.Entry<String, GithubConfig.RepoEntry> e : cfg.repos.entrySet()) {
             String repoKey = e.getKey();
-            UpdatesConfig.RepoEntry entry = e.getValue();
+            GithubConfig.RepoEntry entry = e.getValue();
 
             // IGNORAR la entrada de ejemplo literal "example" (u otras variantes de ejemplo)
             if (repoKey != null) {
@@ -96,7 +96,7 @@ public class UpdaterService {
         }
     }
 
-    private void checkAndDownload(String repoKey, UpdatesConfig.@NotNull RepoEntry entry) throws Exception {
+    private void checkAndDownload(String repoKey, GithubConfig.@NotNull RepoEntry entry) throws Exception {
         GHRepository repo = github.getRepository(entry.link_repo);
         GHRelease latest = repo.getLatestRelease();
         if (latest == null) {
@@ -223,7 +223,7 @@ public class UpdaterService {
             // actualizar datos en la config y guardar
             entry.downloadedHash = downloadedHash;
             entry.name_file_downloaded = targetFileName;
-            UpdatesLoader.save(updatesFile, cfg);
+            GithubLoader.save(updatesFile, cfg);
 
             System.out.println("[UPDATES] Descarga completada e instalada: " + finalTarget + " (sha256: " + downloadedHash + ")");
         } catch (Exception ex) {
@@ -243,7 +243,7 @@ public class UpdaterService {
 
     /** Método público para descargar un repo concreto por su clave en updates.yml */
     public void checkAndDownloadRepo(String repoKey) {
-        UpdatesConfig.RepoEntry entry = cfg.repos.get(repoKey);
+        GithubConfig.RepoEntry entry = cfg.repos.get(repoKey);
         if (entry == null) {
             System.out.println("[UPDATES] No existe la entrada en updates.yml: " + repoKey);
             return;

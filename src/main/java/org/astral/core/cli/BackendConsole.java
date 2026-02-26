@@ -4,8 +4,8 @@ import org.astral.core.config.Config;
 import org.astral.core.config.ConfigLoader;
 import org.astral.core.process.JarProcessManager;
 import org.astral.core.process.ManagerHolder;
-import org.astral.core.updates.github.UpdaterService;
-import org.astral.core.updates.github.UpdatesConfig;
+import org.astral.core.updates.github.GithubService;
+import org.astral.core.updates.github.GithubConfig;
 import org.astral.core.watcher.mods.WatcherRegistry;
 
 import java.nio.file.Path;
@@ -20,20 +20,20 @@ public class BackendConsole {
     private final Config config;
     private final Runnable reloadConfigCallback;
     private final Runnable shutdownCallback;
-    private final UpdaterService updaterService;
+    private final GithubService githubService;
 
     public BackendConsole(ManagerHolder managerHolder,
                           WatcherRegistry watcherRegistry,
                           Config config,
                           Runnable reloadConfigCallback,
                           Runnable shutdownCallback,
-                          UpdaterService updaterService) {
+                          GithubService githubService) {
         this.managerHolder = managerHolder;
         this.watcherRegistry = watcherRegistry;
         this.config = config;
         this.reloadConfigCallback = reloadConfigCallback;
         this.shutdownCallback = shutdownCallback;
-        this.updaterService = updaterService;
+        this.githubService = githubService;
     }
 
     public void startListening() {
@@ -134,9 +134,9 @@ public class BackendConsole {
 
                 // UPDATES list
                 if (input.equalsIgnoreCase("updates list")) {
-                    if (updaterService == null) System.out.println("[UPDATES] UpdaterService no disponible.");
+                    if (githubService == null) System.out.println("[UPDATES] UpdaterService no disponible.");
                     else {
-                        UpdatesConfig ucfg = updaterService.getConfig();
+                        GithubConfig ucfg = githubService.getConfig();
                         if (ucfg == null || ucfg.repos.isEmpty()) System.out.println("[UPDATES] No hay repos en updates.yml");
                         else ucfg.repos.forEach((name, entry) ->
                                 System.out.println(name + " -> " + entry.link_repo + " (asset_type: " + entry.asset_type + ", hash: " + entry.downloadedHash + ", file: " + entry.name_file_downloaded + ")")
@@ -147,9 +147,9 @@ public class BackendConsole {
 
                 // UPDATES check
                 if (input.equalsIgnoreCase("updates check")) {
-                    if (updaterService == null) System.out.println("[UPDATES] UpdaterService no disponible.");
+                    if (githubService == null) System.out.println("[UPDATES] UpdaterService no disponible.");
                     else {
-                        final UpdaterService us = updaterService;
+                        final GithubService us = githubService;
                         new Thread(() -> {
                             System.out.println("[UPDATES] Iniciando comprobación de repos...");
                             us.checkAllAndDownload();
@@ -160,12 +160,12 @@ public class BackendConsole {
                 }
 
                 if (input.equalsIgnoreCase("updates download all")) {
-                    if (updaterService == null) {
+                    if (githubService == null) {
                         System.out.println("[UPDATES] UpdaterService no disponible.");
                         continue;
                     }
 
-                    final UpdaterService us = updaterService;
+                    final GithubService us = githubService;
                     new Thread(() -> {
                         System.out.println("[UPDATES] Iniciando descarga de TODOS los repos...");
                         us.checkAllAndDownload();
@@ -177,10 +177,10 @@ public class BackendConsole {
 
                 // UPDATES download <repoKey>
                 if (input.startsWith("updates download ")) {
-                    if (updaterService == null) { System.out.println("[UPDATES] UpdaterService no disponible."); continue; }
+                    if (githubService == null) { System.out.println("[UPDATES] UpdaterService no disponible."); continue; }
                     String key = input.substring("updates download ".length()).trim();
                     if (key.isEmpty()) { System.out.println("[UPDATES] Debes indicar la clave del repo en updates.yml: updates download <repoKey>"); continue; }
-                    final UpdaterService us = updaterService;
+                    final GithubService us = githubService;
                     new Thread(() -> {
                         System.out.println("[UPDATES] Iniciando descarga para repo: " + key);
                         us.checkAndDownloadRepo(key);

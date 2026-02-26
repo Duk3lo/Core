@@ -3,7 +3,7 @@ package org.astral.core.updates.github;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-public class UpdatesConfig {
+public class GithubConfig {
     public Map<String, RepoEntry> repos = new LinkedHashMap<>();
 
     public static class RepoEntry {

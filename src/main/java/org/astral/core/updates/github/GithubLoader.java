@@ -10,7 +10,7 @@ import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-public class UpdatesLoader {
+public class GithubLoader {
 
     private static final String EXAMPLE_YAML = """
 repos:
@@ -21,7 +21,7 @@ repos:
     name_file_downloaded: ""
 """;
 
-    public static @NotNull UpdatesConfig loadOrCreate(Path file) {
+    public static @NotNull GithubConfig loadOrCreate(Path file) {
         try {
             if (Files.notExists(file)) {
                 Files.createDirectories(file.getParent());
@@ -30,18 +30,18 @@ repos:
 
             try (InputStream in = Files.newInputStream(file)) {
                 Yaml yaml = new Yaml();
-                UpdatesConfig cfg = yaml.loadAs(in, UpdatesConfig.class);
-                if (cfg == null) cfg = new UpdatesConfig();
+                GithubConfig cfg = yaml.loadAs(in, GithubConfig.class);
+                if (cfg == null) cfg = new GithubConfig();
                 if (cfg.repos == null) cfg.repos = new java.util.LinkedHashMap<>();
                 return cfg;
             }
         } catch (IOException e) {
             System.out.println("[UPDATES] Error cargando/creando updates.yml: " + e.getMessage());
-            return new UpdatesConfig();
+            return new GithubConfig();
         }
     }
 
-    public static void save(Path file, UpdatesConfig cfg) {
+    public static void save(Path file, GithubConfig cfg) {
         try {
             DumperOptions opts = new DumperOptions();
             opts.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
