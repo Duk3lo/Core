@@ -2,6 +2,7 @@ package org.astral.core.watcher.mods;
 
 import java.io.IOException;
 import java.nio.file.*;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class ModsWatcher implements Runnable {
@@ -32,7 +33,8 @@ public class ModsWatcher implements Runnable {
                     watchService,
                     StandardWatchEventKinds.ENTRY_CREATE,
                     StandardWatchEventKinds.ENTRY_DELETE,
-                    StandardWatchEventKinds.ENTRY_MODIFY
+                    StandardWatchEventKinds.ENTRY_MODIFY,
+                    StandardWatchEventKinds.OVERFLOW
             );
 
             System.out.println("[MODS] Watcher activo en: " + modsPath);
@@ -52,18 +54,16 @@ public class ModsWatcher implements Runnable {
                     continue;
                 }
 
-                boolean valid;
-
                 try {
-                    if (!key.pollEvents().isEmpty()) {
-                        updater.triggerUpdate();
+                    List<WatchEvent<?>> events = key.pollEvents();
+                    if (!events.isEmpty()) {
+                        updater.triggerUpdate(events);
                     }
                 } finally {
-                    valid = key.reset();
-                }
-
-                if (!valid) {
-                    break;
+                    boolean valid = key.reset();
+                    if (!valid) {
+                        break;
+                    }
                 }
             }
 

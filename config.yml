@@ -1,6 +1,0 @@
-server:
-  basePath: /home/dukelo/Escritorio/Server/LobbyTest
-  jarName: HytaleServer.jar
-  args: --assets ../Assets.zip --backup --backup-dir backups --backup-frequency 30
-watchers:
-- path: /home/dukelo/Descargas/test

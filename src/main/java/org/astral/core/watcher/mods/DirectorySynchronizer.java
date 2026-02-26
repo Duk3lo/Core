@@ -3,6 +3,7 @@ package org.astral.core.watcher.mods;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.Comparator;
+import java.util.List;
 import java.util.stream.Stream;
 
 public final class DirectorySynchronizer {
@@ -69,6 +70,53 @@ public final class DirectorySynchronizer {
                             throw new RuntimeException("No se pudo eliminar " + p + ": " + e.getMessage(), e);
                         }
                     });
+        }
+    }
+
+    public static void applyEvents(Path source, Path target, List<WatchEvent<?>> events) throws IOException {
+        if (!Files.exists(target)) {
+            Files.createDirectories(target);
+        }
+
+        for (WatchEvent<?> ev : events) {
+            WatchEvent.Kind<?> kind = ev.kind();
+
+            // overflow -> por seguridad hacemos full sync (evita inconsistencia)
+            if (kind == StandardWatchEventKinds.OVERFLOW) {
+                replaceSync(source, target);
+                return;
+            }
+
+            Object context = ev.context();
+            if (!(context instanceof Path relative)) {
+                continue;
+            }
+
+            Path srcPath = source.resolve(relative);
+            Path destPath = target.resolve(relative);
+
+            try {
+                if (kind == StandardWatchEventKinds.ENTRY_DELETE) {
+                    if (Files.exists(destPath)) {
+                        deleteRecursively(destPath);
+                    }
+                } else if (kind == StandardWatchEventKinds.ENTRY_CREATE || kind == StandardWatchEventKinds.ENTRY_MODIFY) {
+                    if (Files.exists(srcPath) && Files.isDirectory(srcPath)) {
+                        if (!Files.exists(destPath)) {
+                            DirectorySynchronizer.replaceSync(srcPath, destPath);
+                        }
+                    } else {
+                        if (Files.exists(srcPath)) {
+                            if (destPath.getParent() != null && !Files.exists(destPath.getParent())) {
+                                Files.createDirectories(destPath.getParent());
+                            }
+                            Files.copy(srcPath, destPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                System.err.println("[SYNC] Error aplicando evento " + kind + " " + relative + ": " + e.getMessage());
+            }
         }
     }
 }

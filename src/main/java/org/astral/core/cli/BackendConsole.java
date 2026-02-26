@@ -4,6 +4,8 @@ import org.astral.core.config.Config;
 import org.astral.core.config.ConfigLoader;
 import org.astral.core.process.JarProcessManager;
 import org.astral.core.process.ManagerHolder;
+import org.astral.core.updates.github.UpdaterService;
+import org.astral.core.updates.github.UpdatesConfig;
 import org.astral.core.watcher.mods.WatcherRegistry;
 
 import java.nio.file.Path;
@@ -18,49 +20,44 @@ public class BackendConsole {
     private final Config config;
     private final Runnable reloadConfigCallback;
     private final Runnable shutdownCallback;
+    private final UpdaterService updaterService;
 
     public BackendConsole(ManagerHolder managerHolder,
                           WatcherRegistry watcherRegistry,
                           Config config,
                           Runnable reloadConfigCallback,
-                          Runnable shutdownCallback) {
+                          Runnable shutdownCallback,
+                          UpdaterService updaterService) {
         this.managerHolder = managerHolder;
         this.watcherRegistry = watcherRegistry;
         this.config = config;
         this.reloadConfigCallback = reloadConfigCallback;
         this.shutdownCallback = shutdownCallback;
+        this.updaterService = updaterService;
     }
 
     public void startListening() {
-
         new Thread(() -> {
-            try {
-                Thread.sleep(10000);
-            } catch (InterruptedException ignored) {}
-
+            try { Thread.sleep(10000); } catch (InterruptedException ignored) {}
             System.out.println("""
-            [BACKEND] Consola lista. Comandos:
-              watch add <ruta>
-              watch remove <ruta>
-              watch list
-              backend send <comando>
-              backend reload-config
-              exit / quit
-            """);
+[BACKEND] Consola lista. Comandos:
+  watch add <ruta>
+  watch remove <ruta>
+  watch list
+  backend send <comando>
+  backend reload-config
+  updates list
+  updates check
+  updates download <repoKey>
+  updates download all
+  exit / quit
+""");
         }).start();
 
         try (Scanner scanner = new Scanner(System.in)) {
-
             while (true) {
-
                 String input;
-
-                try {
-                    input = scanner.nextLine();
-                } catch (Exception e) {
-                    break;
-                }
-
+                try { input = scanner.nextLine(); } catch (Exception e) { break; }
                 if (input == null) continue;
                 input = input.trim();
                 if (input.isEmpty()) continue;
@@ -86,91 +83,113 @@ public class BackendConsole {
                     continue;
                 }
 
-                // LIST
                 if (input.equalsIgnoreCase("watch list")) {
                     Map<Path, Path> watchers = watcherRegistry.listWatchers();
-                    if (watchers.isEmpty()) {
-                        System.out.println("[BACKEND] No hay watchers.");
-                    } else {
-                        watchers.forEach((s, t) -> System.out.println(s + " -> " + t));
-                    }
+                    if (watchers.isEmpty()) System.out.println("[BACKEND] No hay watchers.");
+                    else watchers.forEach((s, t) -> System.out.println(s + " -> " + t));
                     continue;
                 }
 
-                // ADD -> always type "jars"
                 if (input.startsWith("watch add ")) {
                     String payload = input.substring("watch add ".length()).trim();
-                    if (payload.isEmpty()) {
-                        System.out.println("[BACKEND] Debes indicar la ruta: watch add <ruta>");
-                        continue;
-                    }
-
+                    if (payload.isEmpty()) { System.out.println("[BACKEND] Debes indicar la ruta: watch add <ruta>"); continue; }
                     Path p = Path.of(payload).toAbsolutePath().normalize();
                     try {
                         watcherRegistry.addWatcher(p);
-
                         if (config.watchers == null) config.watchers = new java.util.ArrayList<>();
                         boolean exists = false;
                         for (Config.Watcher w : config.watchers) {
-                            try {
-                                if (Path.of(w.path).toAbsolutePath().normalize().equals(p)) {
-                                    exists = true;
-                                    break;
-                                }
-                            } catch (Exception ignored) {}
+                            try { if (Path.of(w.path).toAbsolutePath().normalize().equals(p)) { exists = true; break; } } catch (Exception ignored) {}
                         }
                         if (!exists) {
                             config.watchers.add(new Config.Watcher(p.toString()));
                             ConfigLoader.save(config);
                             System.out.println("[BACKEND] Watcher guardado en config.yml: " + p);
-                        } else {
-                            System.out.println("[BACKEND] Watcher ya existe en config.yml: " + p);
-                        }
-
+                        } else System.out.println("[BACKEND] Watcher ya existe en config.yml: " + p);
                     } catch (Exception e) {
                         System.err.println("[BACKEND] No se pudo añadir watcher: " + e.getMessage());
                     }
                     continue;
                 }
 
-                // REMOVE
                 if (input.startsWith("watch remove ")) {
                     String payload = input.substring("watch remove ".length()).trim();
-                    if (payload.isEmpty()) {
-                        System.out.println("[BACKEND] Debes indicar la ruta: watch remove <ruta>");
-                        continue;
-                    }
-
+                    if (payload.isEmpty()) { System.out.println("[BACKEND] Debes indicar la ruta: watch remove <ruta>"); continue; }
                     Path p = Path.of(payload).toAbsolutePath().normalize();
                     boolean removed = watcherRegistry.removeWatcher(p);
-                    if (!removed) {
-                        System.out.println("[BACKEND] No se encontró watcher para remover: " + p);
-                        continue;
-                    }
+                    if (!removed) { System.out.println("[BACKEND] No se encontró watcher para remover: " + p); continue; }
 
-                    // Remover del config
                     if (config.watchers != null) {
                         Iterator<Config.Watcher> it = config.watchers.iterator();
                         boolean any = false;
                         while (it.hasNext()) {
                             Config.Watcher w = it.next();
-                            try {
-                                Path wp = Path.of(w.path).toAbsolutePath().normalize();
-                                if (wp.equals(p)) {
-                                    it.remove();
-                                    any = true;
-                                }
-                            } catch (Exception ignored) {}
+                            try { if (Path.of(w.path).toAbsolutePath().normalize().equals(p)) { it.remove(); any = true; } } catch (Exception ignored) {}
                         }
-                        if (any) {
-                            ConfigLoader.save(config);
-                            System.out.println("[BACKEND] Watcher eliminado del config.yml: " + p);
-                        } else {
-                            System.out.println("[BACKEND] No se encontró watcher en config.yml (solo eliminado en memoria): " + p);
-                        }
+                        if (any) { ConfigLoader.save(config); System.out.println("[BACKEND] Watcher eliminado del config.yml: " + p); }
+                        else System.out.println("[BACKEND] No se encontró watcher en config.yml (solo eliminado en memoria): " + p);
                     }
                     continue;
                 }
+
+                // UPDATES list
+                if (input.equalsIgnoreCase("updates list")) {
+                    if (updaterService == null) System.out.println("[UPDATES] UpdaterService no disponible.");
+                    else {
+                        UpdatesConfig ucfg = updaterService.getConfig();
+                        if (ucfg == null || ucfg.repos.isEmpty()) System.out.println("[UPDATES] No hay repos en updates.yml");
+                        else ucfg.repos.forEach((name, entry) ->
+                                System.out.println(name + " -> " + entry.link_repo + " (asset_type: " + entry.asset_type + ", hash: " + entry.downloadedHash + ", file: " + entry.name_file_downloaded + ")")
+                        );
+                    }
+                    continue;
+                }
+
+                // UPDATES check
+                if (input.equalsIgnoreCase("updates check")) {
+                    if (updaterService == null) System.out.println("[UPDATES] UpdaterService no disponible.");
+                    else {
+                        final UpdaterService us = updaterService;
+                        new Thread(() -> {
+                            System.out.println("[UPDATES] Iniciando comprobación de repos...");
+                            us.checkAllAndDownload();
+                            System.out.println("[UPDATES] Comprobación finalizada.");
+                        }, "UpdatesChecker").start();
+                    }
+                    continue;
+                }
+
+                if (input.equalsIgnoreCase("updates download all")) {
+                    if (updaterService == null) {
+                        System.out.println("[UPDATES] UpdaterService no disponible.");
+                        continue;
+                    }
+
+                    final UpdaterService us = updaterService;
+                    new Thread(() -> {
+                        System.out.println("[UPDATES] Iniciando descarga de TODOS los repos...");
+                        us.checkAllAndDownload();
+                        System.out.println("[UPDATES] Descarga global finalizada.");
+                    }, "UpdatesDownloader-All").start();
+
+                    continue;
+                }
+
+                // UPDATES download <repoKey>
+                if (input.startsWith("updates download ")) {
+                    if (updaterService == null) { System.out.println("[UPDATES] UpdaterService no disponible."); continue; }
+                    String key = input.substring("updates download ".length()).trim();
+                    if (key.isEmpty()) { System.out.println("[UPDATES] Debes indicar la clave del repo en updates.yml: updates download <repoKey>"); continue; }
+                    final UpdaterService us = updaterService;
+                    new Thread(() -> {
+                        System.out.println("[UPDATES] Iniciando descarga para repo: " + key);
+                        us.checkAndDownloadRepo(key);
+                        System.out.println("[UPDATES] Descarga manual para " + key + " finalizada.");
+                    }, "UpdatesDownloader-" + key).start();
+                    continue;
+                }
+
+
 
                 System.out.println("[BACKEND] Comando inválido.");
             }

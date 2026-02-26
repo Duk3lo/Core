@@ -1,0 +1,6 @@
+repos:
+  example:
+    link_repo: "owner/repo"
+    asset_type: ".jar"
+    downloadedHash: ""
+    name_file_downloaded: ""

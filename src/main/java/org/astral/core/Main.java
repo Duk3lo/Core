@@ -5,6 +5,7 @@ import org.astral.core.config.Config;
 import org.astral.core.config.ConfigLoader;
 import org.astral.core.process.JarProcessManager;
 import org.astral.core.process.ManagerHolder;
+import org.astral.core.updates.github.UpdaterService;
 import org.astral.core.watcher.assets.AssetsWatcher;
 import org.astral.core.watcher.mods.DirectorySynchronizer;
 import org.astral.core.watcher.mods.WatcherRegistry;
@@ -42,6 +43,16 @@ class Main {
             return;
         }
 
+        // Inicializar UpdaterService (y generar updates.yml si no existe)
+        UpdaterService updaterService = null;
+        Path updatesGithubFile = baseDir.resolve("githubUpdates.yml");
+        try {
+            updaterService = new UpdaterService(updatesGithubFile, localMods, localAssets);
+            System.out.println("[MAIN] UpdaterService inicializado.");
+        } catch (IOException e) {
+            System.err.println("[MAIN] No se pudo inicializar UpdaterService: " + e.getMessage());
+        }
+
         if (config.server.jarName == null) config.server.jarName = "";
 
         Path serverMods = basePath.resolve("Server").resolve("mods");
@@ -54,8 +65,7 @@ class Main {
 
         ManagerHolder managerHolder = new ManagerHolder(manager);
 
-        WatcherRegistry watcherRegistry =
-                new WatcherRegistry(managerHolder, serverMods);
+        WatcherRegistry watcherRegistry = new WatcherRegistry(managerHolder, serverMods, localMods);
 
         /* ================= CARGA WATCHERS DESDE CONFIG ================= */
 
@@ -116,6 +126,7 @@ class Main {
             System.out.println("[MAIN] Error sincronizando mods: " + e.getMessage());
         }
 
+        // construir BackendConsole (asegúrate la clase ya acepta UpdaterService)
         BackendConsole console = new BackendConsole(
                 managerHolder,
                 watcherRegistry,
@@ -124,8 +135,18 @@ class Main {
                 () -> {
                     watcherRegistry.shutdownAll();
                     manager.stop();
-                }
+                },
+                updaterService // ahora la clase acepta este argumento
         );
+
+        if (updaterService != null) {
+            final UpdaterService us = updaterService;
+            new Thread(() -> {
+                System.out.println("[MAIN] Iniciando comprobación inicial de actualizaciones...");
+                us.checkAllAndDownload();
+                System.out.println("[MAIN] Comprobación inicial de actualizaciones finalizada.");
+            }, "InitialUpdatesCheck").start();
+        }
 
         console.startListening();
 
