@@ -60,8 +60,7 @@ class Main {
 
         List<String> baseArgs = buildArgs(config.server.args);
 
-        JarProcessManager manager =
-                new JarProcessManager(jarPath.toString(), localAssets, baseArgs);
+        JarProcessManager manager = new JarProcessManager(jarPath.toString(), localAssets, baseArgs);
 
         ManagerHolder managerHolder = new ManagerHolder(manager);
 
