@@ -54,16 +54,15 @@ public class ModsWatcher implements Runnable {
                     continue;
                 }
 
-                try {
-                    List<WatchEvent<?>> events = key.pollEvents();
-                    if (!events.isEmpty()) {
-                        updater.triggerUpdate(events);
-                    }
-                } finally {
-                    boolean valid = key.reset();
-                    if (!valid) {
-                        break;
-                    }
+                List<WatchEvent<?>> events = key.pollEvents();
+
+                if (!events.isEmpty()) {
+                    updater.triggerUpdate(events);
+                }
+
+                boolean valid = key.reset();
+                if (!valid) {
+                    break;
                 }
             }
 

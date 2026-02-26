@@ -1,5 +1,7 @@
 package org.astral.core.watcher.mods;
 
+import org.jetbrains.annotations.NotNull;
+
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.Comparator;
@@ -27,19 +29,7 @@ public final class DirectorySynchronizer {
         try (Stream<Path> stream = Files.walk(source)) {
             stream.forEach(srcPath -> {
                 try {
-                    Path relative = source.relativize(srcPath);
-                    Path destPath = target.resolve(relative);
-
-                    if (Files.isDirectory(srcPath)) {
-                        if (!Files.exists(destPath)) {
-                            Files.createDirectories(destPath);
-                        }
-                    } else {
-                        if (destPath.getParent() != null && !Files.exists(destPath.getParent())) {
-                            Files.createDirectories(destPath.getParent());
-                        }
-                        Files.copy(srcPath, destPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
-                    }
+                    copyRecursive(source, target, srcPath);
                 } catch (IOException e) {
                     throw new RuntimeException("Error copiando " + srcPath + " -> " + e.getMessage(), e);
                 }
@@ -119,4 +109,62 @@ public final class DirectorySynchronizer {
             }
         }
     }
+
+    public static void copyTopLevelContents(Path source, Path target) throws IOException {
+        if (!Files.exists(source)) return;
+
+        if (!Files.exists(target)) {
+            Files.createDirectories(target);
+        }
+
+        try (Stream<Path> children = Files.list(source)) {
+            children.forEach(child -> {
+                Path dest = target.resolve(child.getFileName());
+
+                try {
+                    if (Files.isDirectory(child)) {
+                        // Copia recursiva del directorio completo
+                        copyDirectoryRecursive(child, dest);
+                    } else {
+                        Files.copy(child, dest,
+                                StandardCopyOption.REPLACE_EXISTING,
+                                StandardCopyOption.COPY_ATTRIBUTES);
+                    }
+                } catch (IOException e) {
+                    throw new RuntimeException("Error copiando top-level " + child + " -> " + dest + ": " + e.getMessage(), e);
+                }
+            });
+        }
+    }
+    private static void copyDirectoryRecursive(Path source, Path target) throws IOException {
+        try (Stream<Path> stream = Files.walk(source)) {
+            stream.forEach(srcPath -> {
+                try {
+                    copyRecursive(source, target, srcPath);
+                } catch (IOException e) {
+                    throw new RuntimeException("Error copiando recursivo " + srcPath + " -> " + e.getMessage(), e);
+                }
+            });
+        }
+    }
+
+    private static void copyRecursive(@NotNull Path source, @NotNull Path target, Path srcPath) throws IOException {
+        Path relative = source.relativize(srcPath);
+        Path destPath = target.resolve(relative);
+
+        if (Files.isDirectory(srcPath)) {
+            if (!Files.exists(destPath)) {
+                Files.createDirectories(destPath);
+            }
+        } else {
+            if (destPath.getParent() != null && !Files.exists(destPath.getParent())) {
+                Files.createDirectories(destPath.getParent());
+            }
+
+            Files.copy(srcPath, destPath,
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.COPY_ATTRIBUTES);
+        }
+    }
+
 }

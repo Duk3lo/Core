@@ -94,10 +94,6 @@ class Main {
                 }
             }
 
-        } else {
-            // Si no hay watchers configurados → usar localMods por defecto
-            watcherRegistry.addWatcher(localMods);
-            System.out.println("[WATCHER] Usando watcher por defecto: " + localMods);
         }
 
         /* ================= SHUTDOWN LIMPIO ================= */

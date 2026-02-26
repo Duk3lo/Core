@@ -116,15 +116,10 @@ public class JarProcessManager {
         System.out.println("[PROCESS] Servidor detenido.");
     }
 
-    /**
-     * Waits for the managed process to stop. If the process does not stop within the default
-     * timeout, it will be forcibly destroyed.
-     */
     public synchronized void waitForStop() {
         if (process == null) return;
 
         try {
-            // espera razonable para que termine por sí mismo antes de forzar
             if (!process.waitFor(30, TimeUnit.SECONDS)) {
                 System.out.println("[PROCESS] waitForStop: proceso no terminó en 30s, forzando...");
                 process.destroyForcibly();

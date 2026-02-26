@@ -19,6 +19,47 @@ public class WatcherRegistry {
         this.managerHolder = managerHolder;
         this.baseServerMods = baseServerMods.toAbsolutePath().normalize();
         this.localMods = localMods.toAbsolutePath().normalize();
+
+        try {
+            if (!Files.exists(this.localMods)) {
+                Files.createDirectories(this.localMods);
+                System.out.println("[WATCHER] localMods creado: " + this.localMods);
+            }
+        } catch (IOException e) {
+            System.err.println("[WATCHER] No se pudo crear localMods: " + e.getMessage());
+        }
+
+        try {
+            if (!Files.exists(this.baseServerMods)) {
+                Files.createDirectories(this.baseServerMods);
+                System.out.println("[WATCHER] baseServerMods creado: " + this.baseServerMods);
+            }
+        } catch (IOException e) {
+            System.err.println("[WATCHER] No se pudo crear baseServerMods: " + e.getMessage());
+        }
+
+        // Crear y arrancar el watcher "clásico" que vigila localMods y sincroniza con baseServerMods.
+        // Este watcher puede reiniciar el servidor cuando detecta cambios.
+        try {
+            ModsAutoUpdater updater = new ModsAutoUpdater(this.managerHolder, this.localMods, this.baseServerMods, true);
+            ModsWatcher watcher = new ModsWatcher(this.localMods, updater);
+            Thread t = new Thread(watcher, "ModsWatcher-localMods");
+            t.setDaemon(true);
+            t.start();
+
+            handles.put(this.localMods, new WatchHandle(this.localMods, this.baseServerMods, watcher, updater, t));
+
+            // Sync inicial (localMods -> serverMods)
+            try {
+                DirectorySynchronizer.replaceSync(this.localMods, this.baseServerMods);
+                System.out.println("[WATCHER] Sync inicial completada (localMods -> serverMods): " + this.localMods + " -> " + this.baseServerMods);
+            } catch (IOException e) {
+                System.err.println("[WATCHER] Error en sync inicial localMods -> serverMods:");
+            }
+
+        } catch (Exception e) {
+            System.err.println("[WATCHER] Error creando watcher para localMods: " + e.getMessage());
+        }
     }
 
     public synchronized void addWatcher(Path source) {
@@ -26,7 +67,7 @@ public class WatcherRegistry {
             source = source.toAbsolutePath().normalize();
 
             if (handles.containsKey(source)) {
-                System.out.println("[WATCHER] Ya existe watcher: " + source);
+                System.out.println("[WATCHER] Ya existe watcher registrado: " + source);
                 return;
             }
 
@@ -35,23 +76,18 @@ public class WatcherRegistry {
                 System.out.println("[WATCHER] Directorio fuente creado: " + source);
             }
 
-            // Si el watcher es exactamente localMods -> comportamiento clásico (sincroniza con serverMods y puede reiniciar)
-            boolean isLocalModsWatcher = source.equals(localMods);
-
-            Path target;
-            boolean restartOnUpdate;
-
-            if (isLocalModsWatcher) {
-                // target = baseServerMods (normalmente '.../Server/mods'), y este watcher será el que pueda reiniciar
-                target = baseServerMods;
-                restartOnUpdate = true;
-            } else {
-                // watchers de usuario: TODO: siempre aplicar cambios *al* localMods (raíz), sin reiniciar
-                target = localMods;
-                restartOnUpdate = false;
+            // Si el watcher apunta dentro de la carpeta del servidor, avisamos pero lo tratamos
+            // como watcher de usuario (no reiniciará).
+            if (source.startsWith(baseServerMods)) {
+                System.out.println("[WATCHER] Atención: la ruta del watcher apunta dentro de la carpeta del servidor: " + source);
+                System.out.println("[WATCHER] Se registrará como watcher de usuario (no reiniciará ni reemplazará serverMods).");
             }
 
-            // Aseguramos target existente
+            // Target para watchers de usuario: siempre localMods (merge / import hacia localMods)
+            Path target = localMods;
+            boolean restartOnUpdate = false;
+
+            // Aseguramos target
             Files.createDirectories(target);
 
             ModsAutoUpdater updater = new ModsAutoUpdater(managerHolder, source, target, restartOnUpdate);
@@ -63,18 +99,14 @@ public class WatcherRegistry {
 
             handles.put(source, new WatchHandle(source, target, watcher, updater, t));
 
-            // Solo realizamos sync inicial si es el watcher localMods (comportamiento clásico)
-            if (isLocalModsWatcher) {
-                try {
-                    DirectorySynchronizer.replaceSync(source, target);
-                    System.out.println("[WATCHER] Sync inicial completada (localMods -> serverMods): " + source + " -> " + target);
-                } catch (IOException e) {
-                    System.err.println("[WATCHER] Error en sync inicial: " + e.getMessage());
-                }
-            } else {
-                // No hacemos sync inicial para watchers de usuario — solo aplicarán eventos incrementales
-                System.out.println("[WATCHER] Watcher de usuario añadido (solo eventos hacia localMods): " + source + " -> " + target);
+            try {
+                DirectorySynchronizer.copyTopLevelContents(source, target);
+                System.out.println("[WATCHER] Import inicial completado (contenido de " + source + " -> " + target + ")");
+            } catch (IOException e) {
+                System.err.println("[WATCHER] Error importando contenido inicial de watcher:");
             }
+
+            System.out.println("[WATCHER] Watcher de usuario añadido (eventos hacia localMods): " + source + " -> " + target);
 
         } catch (Exception e) {
             System.err.println("[WATCHER] Error añadiendo watcher: " + e.getMessage());
