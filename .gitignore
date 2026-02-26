@@ -6,6 +6,7 @@ build/
 .kotlin
 
 mods
+assets
 
 ### IntelliJ IDEA ###
 .idea/modules.xml
