@@ -2,12 +2,13 @@ package org.astral.core.watcher.mods;
 
 import java.io.IOException;
 import java.nio.file.*;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class ModsWatcher implements Runnable {
 
-    private final Path modsPath;
+    final Path modsPath;
     private final ModsAutoUpdater updater;
 
     public ModsWatcher(Path modsPath, ModsAutoUpdater updater) {
@@ -54,10 +55,41 @@ public class ModsWatcher implements Runnable {
                     continue;
                 }
 
-                List<WatchEvent<?>> events = key.pollEvents();
+                List<WatchEvent<?>> rawEvents = key.pollEvents();
+                if (rawEvents.isEmpty()) {
+                    boolean valid = key.reset();
+                    if (!valid) break;
+                    continue;
+                }
 
-                if (!events.isEmpty()) {
-                    updater.triggerUpdate(events);
+                // Si hay OVERFLOW, delegar inmediatamente (no filtramos overflow)
+                boolean hasOverflow = rawEvents.stream().anyMatch(ev -> ev.kind() == StandardWatchEventKinds.OVERFLOW);
+                if (hasOverflow) {
+                    updater.triggerUpdate(rawEvents);
+                    boolean valid = key.reset();
+                    if (!valid) break;
+                    continue;
+                }
+
+                // Filtrar eventos suprimidos: comprobamos el path absoluto del contexto
+                List<WatchEvent<?>> filtered = new ArrayList<>();
+                for (WatchEvent<?> ev : rawEvents) {
+                    Object ctx = ev.context();
+                    if (ctx instanceof Path rel) {
+                        Path abs = modsPath.resolve(rel).toAbsolutePath().normalize();
+                        if (WatchEventSuppressor.isSuppressed(abs)) {
+                            // descartamos este evento (provocado por una escritura programática)
+                            continue;
+                        } else {
+                            filtered.add(ev);
+                        }
+                    } else {
+                        filtered.add(ev);
+                    }
+                }
+
+                if (!filtered.isEmpty()) {
+                    updater.triggerUpdate(filtered);
                 }
 
                 boolean valid = key.reset();

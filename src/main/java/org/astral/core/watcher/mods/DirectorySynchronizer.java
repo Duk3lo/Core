@@ -5,10 +5,11 @@ import org.jetbrains.annotations.NotNull;
 import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.Comparator;
 import java.util.List;
 
 public final class DirectorySynchronizer {
+
+    private static final long DEST_SUPPRESS_MILLIS = 1200L; // supresión corta por cada archivo escrito
 
     private DirectorySynchronizer() {}
 
@@ -42,11 +43,12 @@ public final class DirectorySynchronizer {
     private static void deleteChildren(Path target) throws IOException {
         if (!Files.exists(target)) return;
 
-        // Usar walkFileTree para borrar recursivamente en orden inverso
         Files.walkFileTree(target, new SimpleFileVisitor<>() {
             @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+            public @NotNull FileVisitResult visitFile(@NotNull Path file, @NotNull BasicFileAttributes attrs) {
                 try {
+                    // suprimir notificaciones para este archivo antes de borrar
+                    WatchEventSuppressor.suppress(file, DEST_SUPPRESS_MILLIS);
                     Files.deleteIfExists(file);
                 } catch (IOException e) {
                     System.err.println("[SYNC] No se pudo borrar archivo " + file + ": " + e.getMessage());
@@ -55,13 +57,13 @@ public final class DirectorySynchronizer {
             }
 
             @Override
-            public FileVisitResult postVisitDirectory(Path dir, IOException exc) {
+            public @NotNull FileVisitResult postVisitDirectory(@NotNull Path dir, IOException exc) {
                 if (exc != null) {
                     System.err.println("[SYNC] Error visitando dir " + dir + ": " + exc.getMessage());
                 }
-                // no borramos el directorio root (target) aquí si es el mismo, solo sus hijos
                 if (!dir.equals(target)) {
                     try {
+                        WatchEventSuppressor.suppress(dir, DEST_SUPPRESS_MILLIS);
                         Files.deleteIfExists(dir);
                     } catch (IOException e) {
                         System.err.println("[SYNC] No se pudo borrar dir " + dir + ": " + e.getMessage());
@@ -76,50 +78,68 @@ public final class DirectorySynchronizer {
      * Copia el árbol de source dentro de target de forma segura:
      * por cada archivo/dir intenta crear/copiar y si falla en ese item lo reporta y continúa.
      */
-    private static void copyTreeSafe(Path source, Path target) throws IOException {
+    static void copyTreeSafe(Path source, Path target) throws IOException {
         if (!Files.exists(source)) return;
 
         Files.walkFileTree(source, new SimpleFileVisitor<>() {
 
             @Override
-            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+            public @NotNull FileVisitResult preVisitDirectory(@NotNull Path dir, @NotNull BasicFileAttributes attrs) {
                 Path rel = source.relativize(dir);
                 Path destDir = target.resolve(rel);
                 try {
                     if (!Files.exists(destDir)) {
+                        WatchEventSuppressor.suppress(destDir, DEST_SUPPRESS_MILLIS);
                         Files.createDirectories(destDir);
                     }
                 } catch (IOException e) {
                     System.err.println("[SYNC] No se pudo crear dir " + destDir + ": " + e.getMessage());
-                    // continuar, tal vez archivos hijos también fallen
                 }
                 return FileVisitResult.CONTINUE;
             }
 
             @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+            public @NotNull FileVisitResult visitFile(@NotNull Path file,
+                                                      @NotNull BasicFileAttributes attrs) {
                 Path rel = source.relativize(file);
                 Path dest = target.resolve(rel);
+
                 try {
-                    if (dest.getParent() != null && !Files.exists(dest.getParent())) {
-                        Files.createDirectories(dest.getParent());
-                    }
-                    Files.copy(file, dest, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
+                    ensureParentDirectory(dest);
+
+                    // suprimir el destino concreto ANTES de escribir
+                    WatchEventSuppressor.suppress(dest, DEST_SUPPRESS_MILLIS);
+
+                    Files.copy(file, dest,
+                            StandardCopyOption.REPLACE_EXISTING,
+                            StandardCopyOption.COPY_ATTRIBUTES);
+
                 } catch (NoSuchFileException nsf) {
-                    // El archivo desapareció entre el walk y la copia, ignorar.
                     System.err.println("[SYNC] Archivo desapareció antes de copiar: " + file);
                 } catch (IOException e) {
                     System.err.println("[SYNC] Error copiando " + file + " -> " + dest + ": " + e.getMessage());
                 }
+
                 return FileVisitResult.CONTINUE;
             }
 
             @Override
-            public FileVisitResult visitFileFailed(Path file, IOException exc) {
-                System.err.println("[SYNC] visitFileFailed " + file + ": " + (exc == null ? "null" : exc.getMessage()));
+            public @NotNull FileVisitResult visitFileFailed(@NotNull Path file, @NotNull IOException exc) {
+                System.err.println("[SYNC] visitFileFailed " + file + ": " + exc.getMessage());
                 return FileVisitResult.CONTINUE;
             }
         });
+    }
+
+    /**
+     * Asegura que el parent de 'dest' exista; lo crea si hace falta y marca supresión.
+     */
+    private static void ensureParentDirectory(@NotNull Path dest) throws IOException {
+        Path parent = dest.getParent();
+        if (parent != null && !Files.exists(parent)) {
+            WatchEventSuppressor.suppress(parent, DEST_SUPPRESS_MILLIS);
+            Files.createDirectories(parent);
+        }
     }
 
     /**
@@ -149,23 +169,22 @@ public final class DirectorySynchronizer {
 
             try {
                 if (kind == StandardWatchEventKinds.ENTRY_DELETE) {
-                    // eliminar objetivo si existe
                     try {
+                        WatchEventSuppressor.suppress(destPath, DEST_SUPPRESS_MILLIS);
                         deleteRecursivelyIfExists(destPath);
                     } catch (IOException e) {
                         System.err.println("[SYNC] Error borrando " + destPath + ": " + e.getMessage());
                     }
                 } else if (kind == StandardWatchEventKinds.ENTRY_CREATE || kind == StandardWatchEventKinds.ENTRY_MODIFY) {
-                    // si es directorio en fuente -> replaceSync (subtree)
                     if (Files.exists(srcPath) && Files.isDirectory(srcPath)) {
+                        // suprimir destino de la subtree antes de hacer replace
+                        WatchEventSuppressor.suppress(destPath, DEST_SUPPRESS_MILLIS);
                         DirectorySynchronizer.replaceSync(srcPath, destPath);
                     } else {
-                        // si el archivo fuente existe, copiar; si no, ignorar (se puede crear después)
                         if (Files.exists(srcPath)) {
                             try {
-                                if (destPath.getParent() != null && !Files.exists(destPath.getParent())) {
-                                    Files.createDirectories(destPath.getParent());
-                                }
+                                ensureParentDirectory(destPath);
+                                WatchEventSuppressor.suppress(destPath, DEST_SUPPRESS_MILLIS);
                                 Files.copy(srcPath, destPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
                             } catch (NoSuchFileException nsf) {
                                 System.err.println("[SYNC] Archivo fuente desapareció: " + srcPath);
@@ -173,7 +192,6 @@ public final class DirectorySynchronizer {
                                 System.err.println("[SYNC] Error copiando evento " + srcPath + " -> " + destPath + ": " + e.getMessage());
                             }
                         } else {
-                            // fuente no existe (posible race) -> ignorar
                             System.err.println("[SYNC] Evento para archivo que no existe (ignorado): " + srcPath);
                         }
                     }
@@ -188,8 +206,9 @@ public final class DirectorySynchronizer {
         if (!Files.exists(path)) return;
         Files.walkFileTree(path, new SimpleFileVisitor<>() {
             @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+            public @NotNull FileVisitResult visitFile(@NotNull Path file, @NotNull BasicFileAttributes attrs) {
                 try {
+                    WatchEventSuppressor.suppress(file, DEST_SUPPRESS_MILLIS);
                     Files.deleteIfExists(file);
                 } catch (IOException e) {
                     System.err.println("[SYNC] No se pudo eliminar archivo " + file + ": " + e.getMessage());
@@ -197,8 +216,9 @@ public final class DirectorySynchronizer {
                 return FileVisitResult.CONTINUE;
             }
             @Override
-            public FileVisitResult postVisitDirectory(Path dir, IOException exc) {
+            public @NotNull FileVisitResult postVisitDirectory(@NotNull Path dir, IOException exc) {
                 try {
+                    WatchEventSuppressor.suppress(dir, DEST_SUPPRESS_MILLIS);
                     Files.deleteIfExists(dir);
                 } catch (IOException e) {
                     System.err.println("[SYNC] No se pudo eliminar dir " + dir + ": " + e.getMessage());
@@ -223,11 +243,12 @@ public final class DirectorySynchronizer {
                 Path dest = target.resolve(child.getFileName());
                 try {
                     if (Files.isDirectory(child)) {
+                        // suprimir destino raíz de esta subtree
+                        WatchEventSuppressor.suppress(dest, DEST_SUPPRESS_MILLIS);
                         copyTreeSafe(child, dest);
                     } else {
-                        if (dest.getParent() != null && !Files.exists(dest.getParent())) {
-                            Files.createDirectories(dest.getParent());
-                        }
+                        ensureParentDirectory(dest);
+                        WatchEventSuppressor.suppress(dest, DEST_SUPPRESS_MILLIS);
                         Files.copy(child, dest, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
                     }
                 } catch (NoSuchFileException nsf) {

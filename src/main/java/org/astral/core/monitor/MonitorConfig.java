@@ -94,7 +94,7 @@ public class MonitorConfig {
                 checkIntervalSeconds: 60
                 responseTimeoutSeconds: 5
                 tpsMin: 18.0
-                tpsCommand: "backend send /world perf"
+                tpsCommand: "world perf"
                 unresponsiveThreshold: 3
                 minTimeBetweenRestartsSeconds: 60
                 restartCooldownSeconds: 300
