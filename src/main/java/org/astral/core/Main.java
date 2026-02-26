@@ -3,11 +3,12 @@ package org.astral.core;
 import org.astral.core.cli.BackendConsole;
 import org.astral.core.config.Config;
 import org.astral.core.config.ConfigLoader;
+import org.astral.core.monitor.MonitorConfig;
+import org.astral.core.monitor.TpsMonitor;
 import org.astral.core.process.JarProcessManager;
 import org.astral.core.process.ManagerHolder;
 import org.astral.core.updates.github.GithubService;
 import org.astral.core.watcher.assets.AssetsWatcher;
-import org.astral.core.watcher.mods.DirectorySynchronizer;
 import org.astral.core.watcher.mods.WatcherRegistry;
 import org.jetbrains.annotations.NotNull;
 
@@ -64,6 +65,7 @@ class Main {
 
         ManagerHolder managerHolder = new ManagerHolder(manager);
 
+        // WatcherRegistry crea el watcher y realiza la sync inicial localMods -> serverMods internamente.
         WatcherRegistry watcherRegistry = new WatcherRegistry(managerHolder, serverMods, localMods);
 
         /* ================= CARGA WATCHERS DESDE CONFIG ================= */
@@ -95,18 +97,34 @@ class Main {
 
         }
 
+        /* ================= INICIALIZAR MONITOR TPS (monitor.yml) ================= */
+
+        Path monitorFile = baseDir.resolve("monitor.yml");
+        MonitorConfig monitorConfig = MonitorConfig.load(monitorFile); // crea por defecto si no existe
+        TpsMonitor tpsMonitor = new TpsMonitor(manager, monitorConfig);
+
+        /* Runnable para recargar la configuración del monitor en caliente */
+        Runnable reloadMonitorRunnable = () -> {
+            System.out.println("[MAIN] Recargando monitor.yml...");
+            MonitorConfig newCfg = MonitorConfig.load(monitorFile);
+            tpsMonitor.updateConfig(newCfg);
+            System.out.println("[MAIN] monitor.yml recargado.");
+        };
+
         /* ================= SHUTDOWN LIMPIO ================= */
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("[SHUTDOWN] Cerrando aplicación...");
             watcherRegistry.shutdownAll();
+            try {
+                tpsMonitor.shutdown();
+            } catch (Exception ignored) {}
             manager.stop();
         }));
 
         /* ================= INICIAR PROCESO ================= */
 
-        manager.start();
-
+        // Iniciar AssetsWatcher (no depende de que el servidor esté ya iniciado)
         Thread assetsThread = new Thread(
                 new AssetsWatcher(localAssets, managerHolder),
                 "AssetsWatcher"
@@ -114,21 +132,27 @@ class Main {
         assetsThread.setDaemon(true);
         assetsThread.start();
 
-        try {
-            DirectorySynchronizer.replaceSync(localMods, serverMods);
-            System.out.println("[MAIN] Sync inicial de mods completada.");
-        } catch (IOException e) {
-            System.out.println("[MAIN] Error sincronizando mods: " + e.getMessage());
-        }
+        // Nota: NO llamamos a DirectorySynchronizer.replaceSync(...) aquí porque WatcherRegistry
+        // ya ejecuta la sincronización inicial (si prefieres que Main haga la sync, mueve/remueve la
+        // sync del constructor de WatcherRegistry y descomenta la llamada aquí).
 
-        // construir BackendConsole (asegúrate la clase ya acepta UpdaterService)
+        // Ahora sí arrancar el servidor
+        manager.start();
+
+        // iniciar monitor TPS ahora que el proceso ya está arrancado
+        tpsMonitor.start();
+
+        // construir BackendConsole (ahora pasamos reloadMonitorRunnable como reloadConfigCallback)
         BackendConsole console = new BackendConsole(
                 managerHolder,
                 watcherRegistry,
                 config,
-                null,
+                reloadMonitorRunnable, // <-- aquí enlazamos el reload para monitor.yml
                 () -> {
                     watcherRegistry.shutdownAll();
+                    try {
+                        tpsMonitor.shutdown();
+                    } catch (Exception ignored) {}
                     manager.stop();
                 },
                 githubService // ahora la clase acepta este argumento

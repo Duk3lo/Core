@@ -1,4 +1,3 @@
-
 package org.astral.core.process;
 
 import org.astral.core.watcher.assets.AssetsArgumentCollector;
@@ -7,6 +6,7 @@ import java.io.*;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.*;
 import java.util.concurrent.TimeUnit;
 
 public class JarProcessManager {
@@ -17,6 +17,9 @@ public class JarProcessManager {
 
     private Process process;
     private Thread outputThread;
+
+    // --- nuevo: cola para leer la salida del servidor desde otras clases ---
+    private final BlockingQueue<String> outputQueue = new LinkedBlockingQueue<>(2000);
 
     public JarProcessManager(String jarPath,
                              Path assetsDir,
@@ -66,6 +69,15 @@ public class JarProcessManager {
                     String line;
                     while ((line = reader.readLine()) != null) {
                         System.out.println("[SERVER] " + line);
+                        // intentar encolar para que otros componentes lean la salida
+                        try {
+                            boolean added = outputQueue.offer(line, 10, TimeUnit.MILLISECONDS);
+                            if (!added) {
+                                System.out.println("[MONITOR] Cola llena, línea descartada.");
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
                     }
 
                 } catch (IOException ignored) {
@@ -111,6 +123,7 @@ public class JarProcessManager {
             }
             process = null;
             outputThread = null;
+            outputQueue.clear();
         }
 
         System.out.println("[PROCESS] Servidor detenido.");
@@ -128,7 +141,6 @@ public class JarProcessManager {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } finally {
-            // asegurar limpieza y join del hilo de salida
             if (outputThread != null && outputThread.isAlive()) {
                 try {
                     outputThread.join(2000);
@@ -138,6 +150,7 @@ public class JarProcessManager {
             }
             process = null;
             outputThread = null;
+            outputQueue.clear();
         }
     }
 
@@ -166,6 +179,15 @@ public class JarProcessManager {
 
         } catch (IOException e) {
             System.out.println("[PROCESS] Error enviando comando: " + e.getMessage());
+        }
+    }
+
+    public String pollOutputLine(long timeout, TimeUnit unit) {
+        try {
+            return outputQueue.poll(timeout, unit);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
         }
     }
 }
