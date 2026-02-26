@@ -5,6 +5,8 @@ build/
 !**/src/test/**/build/
 .kotlin
 
+mods
+
 ### IntelliJ IDEA ###
 .idea/modules.xml
 .idea/jarRepositories.xml
