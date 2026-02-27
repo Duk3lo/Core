@@ -64,7 +64,7 @@ public class ModsAutoUpdater {
                     }
 
                     try {
-                        DirectorySynchronizer.replaceSync(localModsForBuildTrigger, serverMods);
+                        DirectorySynchronizer.copyTopLevelContents(localModsForBuildTrigger, serverMods);
                     } catch (IOException e) {
                         System.err.println("[MODS] Error sincronizando localMods -> serverMods: " + e.getMessage());
                     }
@@ -81,7 +81,7 @@ public class ModsAutoUpdater {
                     }
 
                     try {
-                        DirectorySynchronizer.replaceSync(sourceMods, serverMods);
+                        DirectorySynchronizer.copyTopLevelContents(sourceMods, serverMods);
                     } catch (IOException e) {
                         System.err.println("[MODS] Error sincronizando: " + e.getMessage());
                     }

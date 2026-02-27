@@ -6,7 +6,6 @@ import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 public final class DirectorySynchronizer {
@@ -63,6 +62,7 @@ public final class DirectorySynchronizer {
         });
     }
 
+    /* Versión segura y lenta (con waits) - se mantiene por compatibilidad */
     static void copyTreeSafe(Path source, Path target) throws IOException {
         if (!Files.exists(source)) return;
 
@@ -121,7 +121,71 @@ public final class DirectorySynchronizer {
         }
     }
 
-    public static void applyEvents(Path source, Path target, List<WatchEvent<?>> events) throws IOException {
+
+    public static void copyTopLevelContents(Path source, Path target) throws IOException {
+        if (!Files.exists(source)) return;
+
+        if (!Files.exists(target)) Files.createDirectories(target);
+
+        try (DirectoryStream<Path> children = Files.newDirectoryStream(source)) {
+            for (Path child : children) {
+                Path dest = target.resolve(child.getFileName());
+                try {
+                    WatchEventSuppressor.suppress(dest, DEST_SUPPRESS_MILLIS);
+
+                    if (Files.isDirectory(child)) {
+                        copyTreeFast(child, dest);
+                    } else {
+                        if (dest.getParent() != null && !Files.exists(dest.getParent())) {
+                            Files.createDirectories(dest.getParent());
+                        }
+                        Files.copy(child, dest,
+                                StandardCopyOption.REPLACE_EXISTING,
+                                StandardCopyOption.COPY_ATTRIBUTES);
+                    }
+                } catch (IOException e) {
+                    System.err.println("[SYNC FAST] Error copiando " + child + " -> " + dest + ": " + e.getMessage());
+                }
+            }
+        }
+    }
+
+
+    private static void copyTreeFast(Path source, Path target) throws IOException {
+        if (!Files.exists(source)) return;
+
+        Files.walkFileTree(source, new SimpleFileVisitor<>() {
+            @Override
+            public @NotNull FileVisitResult preVisitDirectory(@NotNull Path dir, @NotNull BasicFileAttributes attrs) throws IOException {
+                Path rel = source.relativize(dir);
+                Path destDir = target.resolve(rel);
+                if (!Files.exists(destDir)) {
+                    Files.createDirectories(destDir);
+                }
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public @NotNull FileVisitResult visitFile(@NotNull Path file, @NotNull BasicFileAttributes attrs) throws IOException {
+                Path rel = source.relativize(file);
+                Path dest = target.resolve(rel);
+                if (dest.getParent() != null && !Files.exists(dest.getParent())) {
+                    Files.createDirectories(dest.getParent());
+                }
+                // copia sin waits ni suppress por cada archivo (sólo el root se suprime arriba)
+                Files.copy(file, dest, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    /* =========================
+       MÉTODOS AUXILIARES LENTOS (se mantienen por compatibilidad)
+       - waitForStableFileQuiet, waitForStableTreeQuiet
+       - applyEvents y deleteRecursivelyIfExists siguen usando las rutinas antiguas
+       ========================= */
+
+    public static void applyEvents(Path source, Path target, java.util.List<WatchEvent<?>> events) throws IOException {
         if (!Files.exists(target)) {
             Files.createDirectories(target);
         }
@@ -193,33 +257,9 @@ public final class DirectorySynchronizer {
         });
     }
 
-    public static void copyTopLevelContents(Path source, Path target) throws IOException {
-        if (!Files.exists(source)) return;
-
-        if (!Files.exists(target)) Files.createDirectories(target);
-
-        try (DirectoryStream<Path> children = Files.newDirectoryStream(source)) {
-            for (Path child : children) {
-                Path dest = target.resolve(child.getFileName());
-                try {
-                    if (Files.isDirectory(child)) {
-                        if (!Files.exists(dest)) {
-                            waitForStableTreeQuiet(child);
-                        }
-                        WatchEventSuppressor.suppress(dest, DEST_SUPPRESS_MILLIS);
-                        copyTreeSafe(child, dest);
-                    } else {
-                        waitForStableFileQuiet(child);
-                        ensureParentDirectory(dest);
-                        WatchEventSuppressor.suppress(dest, DEST_SUPPRESS_MILLIS);
-                        Files.copy(child, dest,
-                                StandardCopyOption.REPLACE_EXISTING,
-                                StandardCopyOption.COPY_ATTRIBUTES);
-                    }
-                } catch (IOException ignored) {}
-            }
-        }
-    }
+    /* =========================
+       Métodos de espera (se mantienen, no usados por copyTopLevelContents)
+       ========================= */
 
     @SuppressWarnings("BusyWait")
     private static void waitForStableFileQuiet(Path file) {

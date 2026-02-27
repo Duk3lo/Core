@@ -17,6 +17,10 @@ public class Config {
 
     public static class Watcher {
 
+        @SuppressWarnings("unused")
+        public Watcher() {
+        }
+
         public String path;
 
         public Watcher(String path) {

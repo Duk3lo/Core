@@ -113,7 +113,7 @@ class Main {
             manager.stop();
             try {
                 System.out.println("[SHUTDOWN] Sincronizando localMods -> serverMods antes de cerrar...");
-                DirectorySynchronizer.replaceSync(localMods, serverMods);
+                DirectorySynchronizer.copyTopLevelContents(localMods, serverMods);
                 System.out.println("[SHUTDOWN] Sincronización final completada.");
             } catch (IOException e) {
                 System.err.println("[SHUTDOWN] Error sincronizando mods en cierre: " + e.getMessage());
