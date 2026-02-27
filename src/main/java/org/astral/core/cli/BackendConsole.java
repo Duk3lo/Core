@@ -44,8 +44,8 @@ public class BackendConsole {
   watch add <ruta>
   watch remove <ruta>
   watch list
-  backend send <comando>
-  backend reload-config
+  backend send <comando> / bs <comando>
+  backend reload-config / brc
   updates list
   updates check
   updates download <repoKey>
@@ -68,7 +68,7 @@ public class BackendConsole {
                     break;
                 }
 
-                if (input.startsWith("backend send ")) {
+                if (input.startsWith("backend send ") || input.startsWith("b s ")) {
                     JarProcessManager manager = managerHolder.get();
                     if (manager == null || !manager.isRunning()) {
                         System.out.println("[BACKEND] Servidor no está corriendo.");
@@ -78,7 +78,7 @@ public class BackendConsole {
                     continue;
                 }
 
-                if (input.equalsIgnoreCase("backend reload-config")) {
+                if (input.equalsIgnoreCase("backend reload-config") || input.equalsIgnoreCase("brc")) {
                     if (reloadConfigCallback != null) reloadConfigCallback.run();
                     continue;
                 }
@@ -132,7 +132,6 @@ public class BackendConsole {
                     continue;
                 }
 
-                // UPDATES list
                 if (input.equalsIgnoreCase("updates list")) {
                     if (githubService == null) System.out.println("[UPDATES] UpdaterService no disponible.");
                     else {
@@ -145,7 +144,6 @@ public class BackendConsole {
                     continue;
                 }
 
-                // UPDATES check
                 if (input.equalsIgnoreCase("updates check")) {
                     if (githubService == null) System.out.println("[UPDATES] UpdaterService no disponible.");
                     else {
@@ -175,7 +173,6 @@ public class BackendConsole {
                     continue;
                 }
 
-                // UPDATES download <repoKey>
                 if (input.startsWith("updates download ")) {
                     if (githubService == null) { System.out.println("[UPDATES] UpdaterService no disponible."); continue; }
                     String key = input.substring("updates download ".length()).trim();

@@ -19,9 +19,6 @@ public class Config {
 
         public String path;
 
-        public Watcher() {
-        }
-
         public Watcher(String path) {
             this.path = path;
         }

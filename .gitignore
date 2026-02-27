@@ -5,8 +5,11 @@ build/
 !**/src/test/**/build/
 .kotlin
 
-mods
-assets
+/mods/
+/assets/
+/config.yml
+/githubUpdates.yml
+/monitor.yml
 
 ### IntelliJ IDEA ###
 .idea/modules.xml

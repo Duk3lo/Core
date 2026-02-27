@@ -41,7 +41,7 @@ repos:
         }
     }
 
-    public static void save(Path file, GithubConfig cfg) {
+    public static void save(@NotNull Path file, GithubConfig cfg) {
         try {
             DumperOptions opts = new DumperOptions();
             opts.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);

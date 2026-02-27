@@ -23,11 +23,10 @@ public class ConfigLoader {
 
         try {
             if (Files.notExists(configPath)) {
-                Config def = DefaultConfig.defaultConfig();
-                writeConfigFile(configPath, def);
+                writeExampleConfig(configPath);
                 System.out.println("[CONFIG] config.yml creado en: "
                         + configPath.toAbsolutePath());
-                return def;
+                return DefaultConfig.defaultConfig();
             }
 
             try (InputStream in = new FileInputStream(configPath.toFile())) {
@@ -311,5 +310,23 @@ public class ConfigLoader {
                     "No se pudo guardar config.yml en: "
                             + configPath.toAbsolutePath(), e);
         }
+    }
+
+    private static void writeExampleConfig(@NotNull Path path) throws IOException {
+
+        if (path.getParent() != null)
+            Files.createDirectories(path.getParent());
+
+        String example = """
+server:
+  basePath: # /home/ruta/completa
+  jarName: HytaleServer.jar
+  args: --assets ../Assets.zip --backup --backup-dir backups --backup-frequency 30
+
+watchers:
+#  - path: /home/path/your/compile/libs
+""";
+
+        Files.writeString(path, example);
     }
 }

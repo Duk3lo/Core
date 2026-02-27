@@ -4,6 +4,7 @@ import org.astral.core.process.ManagerHolder;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -12,8 +13,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public class WatcherRegistry {
 
     private final ManagerHolder managerHolder;
-    private final Path baseServerMods; // carpeta mods del servidor (ej: /ruta/Server/mods)
-    private final Path localMods;      // carpeta mods del ejecutable (ej: ./mods)
+    private final Path baseServerMods;
+    private final Path localMods;
     private final Map<Path, WatchHandle> handles = new ConcurrentHashMap<>();
 
     public WatcherRegistry(ManagerHolder managerHolder, @NotNull Path baseServerMods, @NotNull Path localMods) {
@@ -39,7 +40,6 @@ public class WatcherRegistry {
             System.err.println("[WATCHER] No se pudo crear baseServerMods: " + e.getMessage());
         }
 
-        // Watcher que origina desde localMods -> target: serverMods, restartOnUpdate = true
         try {
             ModsAutoUpdater localToServer = new ModsAutoUpdater(this.managerHolder, this.localMods, this.baseServerMods, true);
             ModsWatcher watcherLocal = new ModsWatcher(this.localMods, localToServer);
@@ -49,7 +49,6 @@ public class WatcherRegistry {
 
             handles.put(this.localMods, new WatchHandle(this.localMods, this.baseServerMods, watcherLocal, localToServer, tLocal));
 
-            // Sync inicial localMods -> serverMods (solo copiar archivos nuevos de local hacia server si no existen)
             try {
                 copyTopLevelIfAbsent(this.localMods, this.baseServerMods);
                 System.out.println("[WATCHER] Import inicial (local -> server) completado: " + this.localMods + " -> " + this.baseServerMods);
@@ -61,7 +60,6 @@ public class WatcherRegistry {
             System.err.println("[WATCHER] Error creando watcher para localMods: " + e.getMessage());
         }
 
-        // Watcher que origina desde serverMods -> target: localMods, restartOnUpdate = false
         try {
             ModsAutoUpdater serverToLocal = new ModsAutoUpdater(this.managerHolder, this.baseServerMods, this.localMods, false);
             ModsWatcher watcherServer = new ModsWatcher(this.baseServerMods, serverToLocal);
@@ -71,7 +69,6 @@ public class WatcherRegistry {
 
             handles.put(this.baseServerMods, new WatchHandle(this.baseServerMods, this.localMods, watcherServer, serverToLocal, tServer));
 
-            // Sync inicial server -> local (solo copiar archivos nuevos de server hacia local si no existen)
             try {
                 copyTopLevelIfAbsent(this.baseServerMods, this.localMods);
                 System.out.println("[WATCHER] Import inicial (server -> local) completado: " + this.baseServerMods + " -> " + this.localMods);
@@ -84,15 +81,6 @@ public class WatcherRegistry {
         }
     }
 
-    /**
-     * Añade un watcher externo.
-     *
-     * Comportamiento:
-     * - Si la ruta es .../build/libs => copia top-level build/libs -> localMods y luego fuerza repl. localMods->serverMods + reinicio.
-     * - Si no: copiar incremental a localMods sin reiniciar.
-     *
-     * @param source ruta a vigilar
-     */
     public synchronized void addWatcher(Path source) {
         try {
             source = source.toAbsolutePath().normalize();
@@ -112,37 +100,37 @@ public class WatcherRegistry {
                 System.out.println("[WATCHER] Directorio fuente creado: " + source);
             }
 
-            // Detectar si es un build/libs (trigger de compilación)
             boolean isBuildLibTrigger = source.endsWith(Path.of("build", "libs"));
 
             ModsAutoUpdater updater;
             Path target;
+
             if (isBuildLibTrigger) {
-                // Para build/libs: creamos un updater que, al detectar cambios,
-                // copiará top-level -> localMods y luego forzará localMods -> serverMods + reinicio.
                 updater = new ModsAutoUpdater(this.managerHolder, source, this.baseServerMods, true, this.localMods);
-                target = this.localMods; // el 'target' lógico del watcher externo es localMods (donde ponemos los jars)
             } else {
-                // watcher externo normal: copiar incremental a localMods sin reiniciar
                 updater = new ModsAutoUpdater(this.managerHolder, source, this.localMods, false);
-                target = this.localMods;
             }
+
+            target = this.localMods;
 
             ModsWatcher watcher = new ModsWatcher(source, updater);
 
-            Thread t = new Thread(watcher, "ModsWatcher-" + (source.getFileName() == null ? "root" : source.getFileName().toString()));
+            Thread t = new Thread(
+                    watcher,
+                    "ModsWatcher-" + (source.getFileName() == null ? "root" : source.getFileName().toString())
+            );
             t.setDaemon(true);
-            t.start();
 
             handles.put(source, new WatchHandle(source, target, watcher, updater, t));
 
-            // Import inicial: copiar todo el contenido top-level hacia localMods.
             try {
                 DirectorySynchronizer.copyTopLevelContents(source, target);
                 System.out.println("[WATCHER] Import inicial completado (contenido de " + source + " -> " + target + ")");
             } catch (IOException e) {
                 System.err.println("[WATCHER] Error importando contenido inicial de watcher: " + e.getMessage());
             }
+
+            t.start();
 
             System.out.println("[WATCHER] Watcher añadido: " + source + " -> " + target
                     + (isBuildLibTrigger ? " (build/libs trigger: copiar + reiniciar)" : " (externo, sin reinicio directo)"));
@@ -195,10 +183,6 @@ public class WatcherRegistry {
         System.out.println("[WATCHER] Todos los watchers finalizados.");
     }
 
-    /**
-     * Copia top-level de 'source' hacia 'target' **solo** si no existen en target.
-     * Evita sobrescribir archivos ya presentes en target durante la import inicial.
-     */
     private static void copyTopLevelIfAbsent(Path source, Path target) throws IOException {
         if (!Files.exists(source)) return;
 
@@ -206,12 +190,11 @@ public class WatcherRegistry {
             Files.createDirectories(target);
         }
 
-        try (java.nio.file.DirectoryStream<Path> children = Files.newDirectoryStream(source)) {
+        try (DirectoryStream<Path> children = Files.newDirectoryStream(source)) {
             for (Path child : children) {
                 Path dest = target.resolve(child.getFileName());
                 try {
                     if (Files.exists(dest)) {
-                        // ya existe en target -> no sobrescribir
                         continue;
                     }
 

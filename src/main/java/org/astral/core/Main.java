@@ -9,6 +9,7 @@ import org.astral.core.process.JarProcessManager;
 import org.astral.core.process.ManagerHolder;
 import org.astral.core.updates.github.GithubService;
 import org.astral.core.watcher.assets.AssetsWatcher;
+import org.astral.core.watcher.mods.DirectorySynchronizer;
 import org.astral.core.watcher.mods.WatcherRegistry;
 import org.jetbrains.annotations.NotNull;
 
@@ -44,7 +45,6 @@ class Main {
             return;
         }
 
-        // Inicializar UpdaterService (y generar updates.yml si no existe)
         GithubService githubService = null;
         Path updatesGithubFile = baseDir.resolve("githubUpdates.yml");
         try {
@@ -58,14 +58,9 @@ class Main {
 
         Path serverMods = basePath.resolve("Server").resolve("mods");
         Path jarPath = basePath.resolve("Server").resolve(config.server.jarName);
-
         List<String> baseArgs = buildArgs(config.server.args);
-
         JarProcessManager manager = new JarProcessManager(jarPath.toString(), localAssets, baseArgs);
-
         ManagerHolder managerHolder = new ManagerHolder(manager);
-
-        // WatcherRegistry crea el watcher y realiza la sync inicial localMods -> serverMods internamente.
         WatcherRegistry watcherRegistry = new WatcherRegistry(managerHolder, serverMods, localMods);
 
         /* ================= CARGA WATCHERS DESDE CONFIG ================= */
@@ -89,6 +84,7 @@ class Main {
                 try {
                     watcherRegistry.addWatcher(watcherPath);
                     System.out.println("[WATCHER] Cargado watcher: " + watcherPath);
+
                 } catch (Exception e) {
                     System.out.println("[WATCHER] Error registrando watcher "
                             + watcherPath + ": " + e.getMessage());
@@ -100,11 +96,9 @@ class Main {
         /* ================= INICIALIZAR MONITOR TPS (monitor.yml) ================= */
 
         Path monitorFile = baseDir.resolve("monitor.yml");
-        MonitorConfig monitorConfig = MonitorConfig.load(monitorFile); // crea por defecto si no existe
-        // pasar monitorFile para persistencia del reinicio periódico
+        MonitorConfig monitorConfig = MonitorConfig.load(monitorFile);
         TpsMonitor tpsMonitor = new TpsMonitor(manager, monitorConfig, monitorFile);
 
-        /* Runnable para recargar la configuración del monitor en caliente */
         Runnable reloadMonitorRunnable = () -> {
             System.out.println("[MAIN] Recargando monitor.yml...");
             MonitorConfig newCfg = MonitorConfig.load(monitorFile);
@@ -116,16 +110,21 @@ class Main {
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("[SHUTDOWN] Cerrando aplicación...");
+            manager.stop();
+            try {
+                System.out.println("[SHUTDOWN] Sincronizando localMods -> serverMods antes de cerrar...");
+                DirectorySynchronizer.replaceSync(localMods, serverMods);
+                System.out.println("[SHUTDOWN] Sincronización final completada.");
+            } catch (IOException e) {
+                System.err.println("[SHUTDOWN] Error sincronizando mods en cierre: " + e.getMessage());
+            }
             watcherRegistry.shutdownAll();
+
             try {
                 tpsMonitor.shutdown();
             } catch (Exception ignored) {}
-            manager.stop();
         }));
 
-        /* ================= INICIAR PROCESO ================= */
-
-        // Iniciar AssetsWatcher (no depende de que el servidor esté ya iniciado)
         Thread assetsThread = new Thread(
                 new AssetsWatcher(localAssets, managerHolder),
                 "AssetsWatcher"
@@ -133,18 +132,15 @@ class Main {
         assetsThread.setDaemon(true);
         assetsThread.start();
 
-        // Ahora sí arrancar el servidor
         manager.start();
 
-        // iniciar monitor TPS ahora que el proceso ya está arrancado
         tpsMonitor.start();
 
-        // construir BackendConsole (ahora pasamos reloadMonitorRunnable como reloadConfigCallback)
         BackendConsole console = new BackendConsole(
                 managerHolder,
                 watcherRegistry,
                 config,
-                reloadMonitorRunnable, // <-- aquí enlazamos el reload para monitor.yml
+                reloadMonitorRunnable,
                 () -> {
                     watcherRegistry.shutdownAll();
                     try {
@@ -152,7 +148,7 @@ class Main {
                     } catch (Exception ignored) {}
                     manager.stop();
                 },
-                githubService // ahora la clase acepta este argumento
+                githubService
         );
 
         if (githubService != null) {

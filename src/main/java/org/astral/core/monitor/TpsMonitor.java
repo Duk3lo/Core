@@ -20,11 +20,8 @@ public class TpsMonitor {
     private final AtomicInteger unresponsiveCount = new AtomicInteger(0);
     private volatile long lastRestartAt = 0L;
 
-    // archivo para persistir la última vez que se realizó un reinicio periódico
     private final Path lastPeriodicFile;
 
-    // ejemplo de línea a parsear:
-    // TPS (10 sec): Min: 30.0, Avg: 30.0, Max: 30.0
     private static final Pattern TPS_PATTERN =
             Pattern.compile("TPS \\(([^)]+)\\): Min: ([0-9.]+), Avg: ([0-9.]+), Max: ([0-9.]+)");
 
@@ -61,16 +58,12 @@ public class TpsMonitor {
         System.out.println("[MONITOR] TPS Monitor detenido.");
     }
 
-    /**
-     * Update configuration in hot (aplica cambios). Si cambia el intervalo, resetea el scheduler.
-     */
     public void updateConfig(MonitorConfig newCfg) {
         if (newCfg == null) return;
         boolean needReschedule = newCfg.checkIntervalSeconds != this.cfg.checkIntervalSeconds;
         this.cfg = newCfg;
         System.out.println("[MONITOR] Config actualizada. checkIntervalSeconds=" + cfg.checkIntervalSeconds);
         if (needReschedule) {
-            // reiniciar scheduler con nuevo intervalo
             shutdown();
             start();
         }
@@ -79,24 +72,18 @@ public class TpsMonitor {
     private void checkOnce() {
         try {
             if (!manager.isRunning()) {
-                // si no está corriendo, evitamos enviar comandos inútiles
-                // también comprobamos si toca reinicio periódico (aun si no está corriendo)
                 checkPeriodicRestart();
                 return;
             }
 
             long now = System.currentTimeMillis();
             if (now - lastRestartAt < (cfg.minTimeBetweenRestartsSeconds * 1000L)) {
-                // evitar reinicios repetidos
-                // pero aun así check periodic
                 checkPeriodicRestart();
                 return;
             }
 
-            // enviar comando para que el servidor muestre perf
             manager.sendCommand(cfg.tpsCommand);
 
-            // esperar líneas hasta timeout buscando la línea TPS
             final long end = System.currentTimeMillis() + (cfg.responseTimeoutSeconds * 1000L);
             boolean gotTps = false;
 
@@ -118,7 +105,7 @@ public class TpsMonitor {
                             System.out.println("[MONITOR] TPS bajo (" + avg + " < " + cfg.tpsMin + "), reiniciando servidor...");
                             doRestart();
                         } else {
-                            System.out.println("[MONITOR] TPS bajo pero dentro del cooldown de reinicio (" + (sinceLast/1000) + "s).");
+                            System.out.println("[MONITOR] TPS bajo pero dentro del cooldown de reinicio (" + (sinceLast / 1000) + "s).");
                         }
                     }
                     break;
@@ -127,7 +114,6 @@ public class TpsMonitor {
 
             if (!gotTps) {
                 int count = unresponsiveCount.incrementAndGet();
-
                 System.out.println("[MONITOR] No se obtuvo respuesta TPS (contador=" + count + ")");
 
                 if (count >= cfg.unresponsiveThreshold) {
@@ -137,7 +123,6 @@ public class TpsMonitor {
                 }
             }
 
-            // Comprobación de reinicio periódico al final de cada ciclo
             checkPeriodicRestart();
 
         } catch (Throwable t) {
@@ -145,11 +130,6 @@ public class TpsMonitor {
         }
     }
 
-    /**
-     * Comprueba si corresponde hacer un reinicio periódico según la configuración.
-     * Si cfg.enablePeriodicRestart == true y han pasado >= periodicRestartDays desde el último reinicio periódico,
-     * intenta reiniciar y persiste la marca temporal.
-     */
     private void checkPeriodicRestart() {
         try {
             if (!cfg.enablePeriodicRestart) return;
@@ -158,17 +138,15 @@ public class TpsMonitor {
 
             long now = System.currentTimeMillis();
             long last = readLastPeriodicTimestamp();
-
             long intervalMillis = TimeUnit.DAYS.toMillis(cfg.periodicRestartDays);
 
             if (now - last >= intervalMillis) {
-                // evitar reinicios si acabamos de reiniciar por otras razones
                 if (now - lastRestartAt < (cfg.minTimeBetweenRestartsSeconds * 1000L)) {
                     System.out.println("[MONITOR] Reinicio periódico pendiente pero dentro del cooldown de reinicio.");
                     return;
                 }
 
-                System.out.println("[MONITOR] Reinicio periódico programado (han pasado " + ((now - last) / (1000L*60L*60L*24L)) + " días). Procediendo a reiniciar...");
+                System.out.println("[MONITOR] Reinicio periódico programado. Procediendo a reiniciar...");
                 doRestart();
                 writeLastPeriodicTimestamp(now);
             }
@@ -203,15 +181,11 @@ public class TpsMonitor {
     private void doRestart() {
         try {
             lastRestartAt = System.currentTimeMillis();
-            // intentar stop gracioso por consola
             manager.sendCommand("stop");
-            // esperar shutdown ordenado
             manager.waitForStop();
             if (manager.isRunning()) {
-                // si aún corre, forzar
                 manager.stop();
             }
-            // start de nuevo
             manager.start();
             System.out.println("[MONITOR] Restart completado.");
         } catch (Exception e) {
@@ -222,14 +196,12 @@ public class TpsMonitor {
     private void doForceRestart() {
         try {
             lastRestartAt = System.currentTimeMillis();
-            // primero intentar stop por consola
             manager.sendCommand("stop");
             manager.waitForStop();
             if (manager.isRunning()) {
                 System.out.println("[MONITOR] Stop gracioso falló, forzando stop...");
                 manager.stop();
             }
-            // arrancar otra vez
             manager.start();
             System.out.println("[MONITOR] Force restart completado.");
         } catch (Exception e) {

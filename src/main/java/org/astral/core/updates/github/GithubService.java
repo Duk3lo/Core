@@ -26,10 +26,8 @@ public class GithubService {
     private final GithubConfig cfg;
     private final GitHub github;
     private final HttpClient httpClient;
-    private final String token; // puede ser null
+    private final String token;
 
-    // Si true -> mover archivo anterior a backups/<name>.old.<epoch>
-    // Si false -> eliminar archivo anterior (no recomendado porque podrías perder versión)
     private static final boolean MOVE_OLD_TO_BACKUPS = true;
 
     public GithubService(Path updatesFile, Path localMods, Path localAssets) throws IOException {
@@ -61,7 +59,6 @@ public class GithubService {
             String repoKey = e.getKey();
             GithubConfig.RepoEntry entry = e.getValue();
 
-            // IGNORAR la entrada de ejemplo literal "example" (u otras variantes de ejemplo)
             if (repoKey != null) {
                 String keyLower = repoKey.trim().toLowerCase();
                 if (keyLower.startsWith("example")) {
@@ -71,7 +68,6 @@ public class GithubService {
                 }
             }
 
-            // Si no hay entry o link_repo es vacío/placeholder -> ignorar
             if (entry == null) {
                 System.out.println("[UPDATES] Entrada nula para clave: " + repoKey + " -> ignorado.");
                 continue;
@@ -83,7 +79,7 @@ public class GithubService {
             }
 
             String lr = entry.link_repo.trim();
-            if (lr.equalsIgnoreCase("owner/repo") || lr.equalsIgnoreCase("user/repo") ) {
+            if (lr.equalsIgnoreCase("owner/repo") || lr.equalsIgnoreCase("user/repo")) {
                 System.out.println("[UPDATES] link_repo es placeholder para " + repoKey + " (" + lr + ") -> ignorado.");
                 continue;
             }
@@ -104,7 +100,6 @@ public class GithubService {
             return;
         }
 
-        // elegir asset que coincida con asset_type
         GHAsset targetAsset = null;
         for (GHAsset asset : latest.getAssets()) {
             if (asset.getName() != null && asset.getName().endsWith(entry.asset_type)) {
@@ -118,11 +113,9 @@ public class GithubService {
             return;
         }
 
-        // asegurar directorios
         Files.createDirectories(localMods);
         Files.createDirectories(localAssets);
 
-        // decidir nombre final: si name_file_downloaded está definido, úsalo; si no, usa el nombre del asset
         String targetFileName = (entry.name_file_downloaded != null && !entry.name_file_downloaded.isBlank())
                 ? entry.name_file_downloaded
                 : targetAsset.getName();
@@ -131,7 +124,6 @@ public class GithubService {
         Path finalTarget = finalDir.resolve(targetFileName);
         Path tmpDownload = finalDir.resolve(targetAsset.getName() + ".download");
 
-        // comparar hashes: si downloadedHash no vacío y archivo existe y hashes coinciden -> ignorar
         if (entry.downloadedHash != null && !entry.downloadedHash.isBlank() && Files.exists(finalTarget)) {
             try {
                 String localHash = HashUtils.sha256OfFile(finalTarget);
@@ -148,9 +140,9 @@ public class GithubService {
             System.out.println("[UPDATES] " + repoKey + " no tiene hash guardado o archivo no existe -> descargando.");
         }
 
-        // obtener URL de descarga (preferir browser_download_url)
         String browserUrl = null;
         try { browserUrl = targetAsset.getBrowserDownloadUrl(); } catch (Exception ignored) {}
+
         String downloadUrl;
         if (browserUrl != null && !browserUrl.isBlank()) {
             downloadUrl = browserUrl;
@@ -162,7 +154,6 @@ public class GithubService {
 
         System.out.println("[UPDATES] Descargando " + targetAsset.getName() + " desde " + downloadUrl + " -> tmp " + tmpDownload);
 
-        // petición
         HttpRequest.Builder rb = HttpRequest.newBuilder()
                 .uri(URI.create(downloadUrl))
                 .timeout(Duration.ofMinutes(10))
@@ -173,31 +164,31 @@ public class GithubService {
         if (token != null && !token.isBlank()) rb.header("Authorization", "token " + token);
 
         HttpRequest req = rb.build();
-
         HttpResponse<InputStream> resp = httpClient.send(req, BodyHandlers.ofInputStream());
         int status = resp.statusCode();
+
         if (status < 200 || status >= 300) {
             try (InputStream is = resp.body()) { is.transferTo(OutputStream.nullOutputStream()); }
             throw new IOException("HTTP error descargando asset: " + status);
         }
 
-        // guardar a tmp
         try (InputStream in = resp.body()) {
             Files.copy(in, tmpDownload, StandardCopyOption.REPLACE_EXISTING);
         }
 
-        // calcular hash del archivo descargado
         String downloadedHash = HashUtils.sha256OfFile(tmpDownload);
 
-        // Si existe una versión anterior registrada en name_file_downloaded -> moverla/ eliminarla
         if (entry.name_file_downloaded != null && !entry.name_file_downloaded.isBlank()) {
             try {
-                Path prevPath = chooseDir(entry.name_file_downloaded, targetAsset).resolve(entry.name_file_downloaded);
+                Path prevPath = chooseDir(entry.name_file_downloaded, targetAsset)
+                        .resolve(entry.name_file_downloaded);
+
                 if (Files.exists(prevPath)) {
                     if (MOVE_OLD_TO_BACKUPS) {
                         Path backupsDir = prevPath.getParent().resolve("backups");
                         Files.createDirectories(backupsDir);
-                        String backupName = prevPath.getFileName().toString() + ".old." + Instant.now().toEpochMilli();
+                        String backupName = prevPath.getFileName().toString()
+                                + ".old." + Instant.now().toEpochMilli();
                         Path backupTarget = backupsDir.resolve(backupName);
                         Files.move(prevPath, backupTarget, StandardCopyOption.REPLACE_EXISTING);
                         System.out.println("[UPDATES] Movido archivo anterior a backups: " + backupTarget);
@@ -208,24 +199,25 @@ public class GithubService {
                 }
             } catch (Exception ex) {
                 System.err.println("[UPDATES] No se pudo mover/eliminar archivo anterior: " + ex.getMessage());
-                // continuar: no abortamos la instalación sólo por un fallo moviendo el archivo viejo
             }
         }
 
-        // mover tmp al destino
         try {
             try {
-                Files.move(tmpDownload, finalTarget, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException amnse) {
-                Files.move(tmpDownload, finalTarget, StandardCopyOption.REPLACE_EXISTING);
+                Files.move(tmpDownload, finalTarget,
+                        StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException ignored) {
+                Files.move(tmpDownload, finalTarget,
+                        StandardCopyOption.REPLACE_EXISTING);
             }
 
-            // actualizar datos en la config y guardar
             entry.downloadedHash = downloadedHash;
             entry.name_file_downloaded = targetFileName;
             GithubLoader.save(updatesFile, cfg);
 
-            System.out.println("[UPDATES] Descarga completada e instalada: " + finalTarget + " (sha256: " + downloadedHash + ")");
+            System.out.println("[UPDATES] Descarga completada e instalada: "
+                    + finalTarget + " (sha256: " + downloadedHash + ")");
         } catch (Exception ex) {
             try { Files.deleteIfExists(tmpDownload); } catch (Exception ignored) {}
             throw ex;
@@ -233,21 +225,30 @@ public class GithubService {
     }
 
     private Path chooseDir(String filename, GHAsset targetAsset) {
-        String n = filename != null ? filename.toLowerCase() : (targetAsset.getName() != null ? targetAsset.getName().toLowerCase() : "");
+        String n = filename != null
+                ? filename.toLowerCase()
+                : (targetAsset.getName() != null
+                ? targetAsset.getName().toLowerCase()
+                : "");
+
         if (n.endsWith(".zip")) return localAssets;
         if (n.endsWith(".jar")) return localMods;
-        String assetName = targetAsset.getName() != null ? targetAsset.getName().toLowerCase() : "";
+
+        String assetName = targetAsset.getName() != null
+                ? targetAsset.getName().toLowerCase()
+                : "";
+
         if (assetName.endsWith(".zip")) return localAssets;
         return localMods;
     }
 
-    /** Método público para descargar un repo concreto por su clave en updates.yml */
     public void checkAndDownloadRepo(String repoKey) {
         GithubConfig.RepoEntry entry = cfg.repos.get(repoKey);
         if (entry == null) {
             System.out.println("[UPDATES] No existe la entrada en updates.yml: " + repoKey);
             return;
         }
+
         try {
             checkAndDownload(repoKey, entry);
         } catch (Exception e) {

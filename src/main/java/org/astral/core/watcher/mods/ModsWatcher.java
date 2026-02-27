@@ -61,8 +61,6 @@ public class ModsWatcher implements Runnable {
                     if (!valid) break;
                     continue;
                 }
-
-                // Si hay OVERFLOW, delegar inmediatamente (no filtramos overflow)
                 boolean hasOverflow = rawEvents.stream().anyMatch(ev -> ev.kind() == StandardWatchEventKinds.OVERFLOW);
                 if (hasOverflow) {
                     updater.triggerUpdate(rawEvents);
@@ -70,17 +68,12 @@ public class ModsWatcher implements Runnable {
                     if (!valid) break;
                     continue;
                 }
-
-                // Filtrar eventos suprimidos: comprobamos el path absoluto del contexto
                 List<WatchEvent<?>> filtered = new ArrayList<>();
                 for (WatchEvent<?> ev : rawEvents) {
                     Object ctx = ev.context();
                     if (ctx instanceof Path rel) {
                         Path abs = modsPath.resolve(rel).toAbsolutePath().normalize();
-                        if (WatchEventSuppressor.isSuppressed(abs)) {
-                            // descartamos este evento (provocado por una escritura programática)
-                            continue;
-                        } else {
+                        if (!WatchEventSuppressor.isSuppressed(abs)) {
                             filtered.add(ev);
                         }
                     } else {

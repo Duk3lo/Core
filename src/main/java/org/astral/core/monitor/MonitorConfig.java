@@ -18,15 +18,11 @@ public class MonitorConfig {
     public int restartCooldownSeconds = 300;
     public boolean restartOnLowTps = true;
 
-    // --- periodic restart ---
-    public boolean enablePeriodicRestart = false; // activar reinicio periódico
-    public int periodicRestartDays = 7;           // cada cuantos días reiniciar si está activado
+    public boolean enablePeriodicRestart = false;
+    public int periodicRestartDays = 7;
 
     public MonitorConfig() {}
 
-    /**
-     * Load config from path. If file does not exist, create with defaults.
-     */
     public static MonitorConfig load(Path path) {
         MonitorConfig cfg = new MonitorConfig();
 

@@ -18,7 +18,6 @@ public class JarProcessManager {
     private Process process;
     private Thread outputThread;
 
-    // --- nuevo: cola para leer la salida del servidor desde otras clases ---
     private final BlockingQueue<String> outputQueue = new LinkedBlockingQueue<>(2000);
 
     public JarProcessManager(String jarPath,
@@ -69,7 +68,6 @@ public class JarProcessManager {
                     String line;
                     while ((line = reader.readLine()) != null) {
                         System.out.println("[SERVER] " + line);
-                        // intentar encolar para que otros componentes lean la salida
                         try {
                             boolean added = outputQueue.offer(line, 10, TimeUnit.MILLISECONDS);
                             if (!added) {
@@ -113,7 +111,6 @@ public class JarProcessManager {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } finally {
-            // attempt to join reader thread so no resources remain
             if (outputThread != null && outputThread.isAlive()) {
                 try {
                     outputThread.join(2000);
